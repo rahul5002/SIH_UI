@@ -140,7 +140,7 @@
 
 <script src="js/mock-api.js"></script>
 <script>
-// Language change notice
+
 document.getElementById('lang').addEventListener('change', function(e) {
   const notice = document.getElementById('langNotice');
   if (e.target.value === 'हिन्दी') {
@@ -150,7 +150,7 @@ document.getElementById('lang').addEventListener('change', function(e) {
   }
 });
 
-// Forgot PIN Modal Logic
+
 const modal = document.getElementById('forgotPinModal');
 document.getElementById('forgotPinBtn').addEventListener('click', function(e) {
   e.preventDefault();
@@ -161,43 +161,17 @@ document.getElementById('forgotPinBtn').addEventListener('click', function(e) {
 });
 document.getElementById('btnReqOtp').addEventListener('click', function() {
   if (document.getElementById('otpBadge').value.trim()) {
-    // Prototype only: SMS/OTP delivery is mocked.
-    // Production implementation should connect to the organization's approved identity/OTP service.
+    
     document.getElementById('otpStep1').style.display = 'none';
     document.getElementById('otpStep2').style.display = 'block';
     document.getElementById('fpTitle').textContent = 'Verification';
   }
 });
 
-/**
- * ---------------------------------------------------------------------
- * Login security audit hook (EmailJS)
- * ---------------------------------------------------------------------
- * Fires once on every SUCCESSFUL sign-in. Sends only the officer's
- * badge ID (service ID) and a timestamp to the security audit mailbox
- * for login monitoring — the PIN is never included in this email.
- *
- * SETUP REQUIRED before this will actually send anything:
- *   1. Create a free account at https://www.emailjs.com
- *   2. Add an Email Service (e.g. Gmail) → copy its Service ID below.
- *   3. Create an Email Template with these variable placeholders in
- *      the template body, e.g.:
- *        To: {{to_email}}
- *        Subject: PRAMAAN AI — Login Alert
- *        Body:
- *          Officer badge ID: {{badge_id}}
- *          Login time: {{login_time}}
- *          Checkpoint node: {{node_id}}
- *      → copy that Template ID below.
- *   4. Account → General → copy your Public Key below.
- * EmailJS is safe to call directly from the browser (that's its whole
- * design) — the Public Key only authorizes sending through templates
- * you control, it isn't a secret credential.
- * ---------------------------------------------------------------------
- */
-const EMAILJS_PUBLIC_KEY  = 'dTWckZq-kTkL02EQ9';   // from EmailJS → Account → General
-const EMAILJS_SERVICE_ID  = 'service_014ukqm';      // from EmailJS → Email Services
-const EMAILJS_TEMPLATE_ID = 'template_e6vmwj4';     // from EmailJS → Email Templates
+
+const EMAILJS_PUBLIC_KEY  = 'dTWckZq-kTkL02EQ9';  
+const EMAILJS_SERVICE_ID  = 'service_014ukqm';      
+const EMAILJS_TEMPLATE_ID = 'template_e6vmwj4';    
 const AUDIT_NOTIFY_EMAIL  = 'mankanirahul@gmail.com';
 
 emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
@@ -211,24 +185,22 @@ async function notifyLoginEvent(badgeId) {
     node_id: 'BOP-RAX-04'
   };
 
-  // Local, tamper-evident audit trail — kept even if the email fails to
-  // send, so a login is never silently unrecorded.
+  
   try {
     const trail = JSON.parse(sessionStorage.getItem('pramaan_login_audit') || '[]');
     trail.push(templateParams);
     sessionStorage.setItem('pramaan_login_audit', JSON.stringify(trail));
-  } catch (_) { /* storage unavailable — non-blocking */ }
+  } catch (_) {  }
 
   try {
     await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, templateParams);
   } catch (err) {
-    // Non-blocking by design: a failed alert must never prevent a legitimate,
-    // already-authenticated officer from getting into the console.
+    
     console.warn('Login alert email not sent — check your EmailJS IDs above.', err);
   }
 }
 
-// Login Form Submit
+
 document.getElementById('loginForm').addEventListener('submit', async function(e){
   e.preventDefault();
   
@@ -239,7 +211,7 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
   const summary = document.getElementById('errorSummary');
   const errList = document.getElementById('errorList');
   
-  // Reset states
+  
   bGroup.classList.remove('error');
   pGroup.classList.remove('error');
   document.getElementById('badgeErr').textContent = 'Enter your officer badge ID';
@@ -256,7 +228,7 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
     return;
   }
   
-  // Submit to mock API
+  
   try {
     const btn = document.querySelector('.login-submit');
     const ogText = btn.textContent;
@@ -266,7 +238,7 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
     const res = await API.authLogin(b.value.trim(), p.value.trim());
     sessionStorage.setItem('pramaan_session', JSON.stringify(res));
 
-    // Security audit: alert on every successful sign-in (badge ID + timestamp only)
+    
     await notifyLoginEvent(b.value.trim());
 
     window.location.href = 'index.html';
