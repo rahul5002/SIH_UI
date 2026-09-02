@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — PRAMAAN AI</title>
+<link rel="stylesheet" href="assets/fonts/inter.css">
+<link rel="stylesheet" href="assets/fonts/jetbrains-mono.css">
+<link rel="stylesheet" href="css/styles.css">
+<script src="assets/js/chart.umd.min.js"></script>
+</head>
+<body>
+<script src="js/config.js"></script>
+<script src="js/mock-api.js"></script>
+<script src="js/app.js"></script>
+<script>
+const main = PRAMAAN.mount('dashboard');
+
+async function renderDashboard() {
+  main.innerHTML = `
+    <div class="page-head">
+      <div>
+        <h1>Command console</h1>
+        <div class="page-sub">Raxaul ICP — Sector 4 · Night shift · 02 September 2026</div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <a href="screening.html" class="btn btn-primary">+ New screening</a>
+      </div>
+    </div>
+
+    <div class="stat-grid" id="statGrid">
+      <div class="stat-hero"><div><div class="eyebrow">Loading...</div></div></div>
+    </div>
+
+    <div class="dash-grid">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Recent activity</h2>
+          <span class="meta">Live feed · Raxaul ICP</span>
+        </div>
+        <div id="activityFeed" style="padding: 16px; color: var(--text-secondary);">Loading...</div>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:16px;">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Risk distribution</h2>
+            <span class="meta">Today</span>
+          </div>
+          <div class="panel-body">
+            <canvas id="riskDonut" height="170"></canvas>
+            <div class="risk-legend" id="riskLegend"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Ledger sync</h2>
+            <span class="meta">Hyperledger Fabric — local node</span>
+          </div>
+          <div class="panel-body" style="font-size:12.5px; color:var(--text-secondary); line-height:1.7;">
+            <div style="display:flex; justify-content:space-between;"><span>Node status</span><strong class="mono" style="color:#276749;">ACTIVE — offline</strong></div>
+            <div style="display:flex; justify-content:space-between;"><span>Blocks pending upstream</span><strong class="mono" style="color:var(--navy);">47</strong></div>
+            <div style="display:flex; justify-content:space-between;"><span>Last successful sync</span><strong class="mono" style="color:var(--navy);">Yesterday, 06:12 IST</strong></div>
+            <div class="tech-footnote">
+              <span class="tech-chip" data-status="pending-integration" title="Local inference, no cloud dependency">ONNX runtime</span>
+              <span class="tech-chip" data-status="pending-integration" title="SHA-256 Merkle chained event log">SHA-256 Merkle</span>
+              <span class="tech-chip" data-status="pending-integration" title="Field-level encryption at rest">AES-256</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Fetch from mock API
+  const [stats, activity] = await Promise.all([
+    API.fetchDashboardStats('raxaul'),
+    API.fetchActivity('raxaul')
+  ]);
+
+  const pct = (n, d, dp) => d > 0 ? (n / d * 100).toFixed(dp) : '0';
+
+  document.getElementById('statGrid').innerHTML = `
+    <div class="stat-hero">
+      <div>
+        <div class="eyebrow">Travelers screened today</div>
+        <div class="big">${stats.screened}<span class="unit">/ shift</span></div>
+      </div>
+      <div class="delta">${stats.screened > 0 ? '▲ 14.2% vs. yesterday\'s night shift' : 'No screenings yet this shift'}</div>
+    </div>
+    <div class="stat-card">
+      <div class="lbl">Avg. screening time</div>
+      <div class="val">38<span style="font-size:15px; color:var(--text-secondary); font-weight:600;">s</span></div>
+      <div class="sub">was 3–5 min manual</div>
+    </div>
+    <div class="stat-card">
+      <div class="lbl">Flagged for review</div>
+      <div class="val flagcolor">${stats.flagged}</div>
+      <div class="sub">${pct(stats.flagged, stats.screened, 1)}% of screened</div>
+    </div>
+    <div class="stat-card">
+      <div class="lbl">Rejected</div>
+      <div class="val" style="color:#9B2C2C;">${stats.rejected}</div>
+      <div class="sub">${pct(stats.rejected, stats.screened, 2)}% of screened</div>
+    </div>
+  `;
+
+  const clearCount = stats.screened - stats.flagged - stats.rejected - stats.failedOcr;
+
+  document.getElementById('riskLegend').innerHTML = `
+    <div class="item"><span class="sw" style="background:#38A169;"></span>Clear <span class="n">${clearCount}</span></div>
+    <div class="item"><span class="sw" style="background:#D69E2E;"></span>Flagged <span class="n">${stats.flagged}</span></div>
+    <div class="item"><span class="sw" style="background:#C53030;"></span>Rejected <span class="n">${stats.rejected}</span></div>
+    <div class="item"><span class="sw" style="background:#CBD5E0;"></span>Failed OCR — retried <span class="n">${stats.failedOcr}</span></div>
+  `;
+
+  document.getElementById('activityFeed').innerHTML = activity.map(a => {
+    const cls = a.risk === 'clear' ? 'status-clear' : a.risk === 'flag' ? 'status-flag' : 'status-reject';
+    const label = a.risk === 'clear' ? '<span class="dot"></span>Clear' : a.risk === 'flag' ? '<span class="dot"></span>Flag' : '<span class="dot"></span>Reject';
+    return `<div class="activity-row">
+      <div class="doc-icon">${PRAMAAN.ICONS.doc}</div>
+      <div class="who">
+        <div class="name">${a.name}</div>
+        <div class="meta">${a.doc}<span class="sep">·</span>Risk score ${a.score}</div>
+      </div>
+      <span class="status ${cls}">${label}</span>
+      <div class="time">${a.time}</div>
+    </div>`;
+  }).join('');
+  document.getElementById('activityFeed').style.padding = '0';
+
+  new Chart(document.getElementById('riskDonut'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Clear','Flagged','Rejected','Failed OCR'],
+      datasets: [{
+        data: [clearCount, stats.flagged, stats.rejected, stats.failedOcr],
+        backgroundColor: ['#38A169','#D69E2E','#C53030','#CBD5E0'],
+        borderWidth: 2,
+        borderColor: '#FFFFFF'
+      }]
+    },
+    options: {
+      cutout: '68%',
+      plugins: { legend: { display:false }, tooltip:{enabled:true} }
+    }
+  });
+}
+
+renderDashboard();
+</script>
+</body>
+</html>
