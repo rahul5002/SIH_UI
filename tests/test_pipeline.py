@@ -98,6 +98,8 @@ class TestPramaanAI(unittest.TestCase):
         res_diff = self.face_engine.verify_faces(avatar1, avatar_diff)
         self.assertTrue(res_diff["success"])
         self.assertLess(res_diff["similarity_score"], res_same["similarity_score"])
+        self.assertFalse(res_diff["is_match"])
+
 
     def test_05_rules_validation_expired(self):
         """Tests date logic validator on expired documents."""

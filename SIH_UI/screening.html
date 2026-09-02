@@ -259,8 +259,10 @@ let abortController = new AbortController();
 async function runPipeline(payload, signal) {
   try {
     const mode = payload.mode || 'live';
+    localStorage.setItem('pramaan_active_bg_case', caseRef);
 
     // Stage 2 — Extract (OCR)
+
     setStage(1, 'active');
     document.getElementById('stageDetail').innerHTML =
       `<strong style="color:var(--navy);">02 Extract</strong> — ${stageDetails.extract} <span class="tag">extract</span>`;

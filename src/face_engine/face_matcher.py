@@ -215,13 +215,20 @@ class FaceVerificationEngine:
         emb2 = self.compute_embedding(live_face)
 
         cosine_sim = float(np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2) + 1e-7))
-        normalized_sim = round(max(0.0, min(1.0, (cosine_sim + 1.0) / 2.0)), 4)
+        
+        # Calibrated normalization anchored to face distribution boundaries:
+        # Different faces (cos_sim < 0.55) -> calibrated_sim < 0.40 (Mismatch)
+        # Same face (cos_sim > 0.75) -> calibrated_sim > 0.80 (Match)
+        calibrated_sim = max(0.0, min(1.0, (cosine_sim - 0.35) / 0.50))
+        normalized_sim = round(float(calibrated_sim), 4)
 
         # Liveness on live photo
         liveness = self.check_liveness_heuristics(live_image)
 
         # Verdict
         is_match = normalized_sim >= threshold and liveness["is_live"]
+
+
 
         # Base64 encodings of cropped faces
         _, b1 = cv2.imencode('.png', doc_face)

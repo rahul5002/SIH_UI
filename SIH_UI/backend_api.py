@@ -36,7 +36,7 @@ from typing import List, Optional
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse
@@ -392,8 +392,53 @@ def api_decision(req: DecisionReq):
     }
 
 
+_async_screening_jobs = {}
+
+
+@app.post("/api/screening/background-run")
+async def api_background_run(req: AnalyzeReq, background_tasks: BackgroundTasks):
+    """
+    Launches 5-stage screening in an async background task so the officer can navigate away freely.
+    """
+    case_ref = req.caseRef or f"RAX-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    _async_screening_jobs[case_ref] = {
+        "caseRef": case_ref,
+        "status": "PROCESSING",
+        "progress": "Stage 01 Preprocess",
+        "result": None,
+        "startTime": datetime.datetime.now().isoformat()
+    }
+    
+    def _worker():
+        try:
+            res = api_analyze(req)
+            _async_screening_jobs[case_ref]["status"] = "COMPLETED"
+            _async_screening_jobs[case_ref]["progress"] = "Finished"
+            _async_screening_jobs[case_ref]["result"] = res
+        except Exception as exc:
+            _async_screening_jobs[case_ref]["status"] = "ERROR"
+            _async_screening_jobs[case_ref]["progress"] = f"Failed: {str(exc)}"
+
+    background_tasks.add_task(_worker)
+    return {
+        "success": True,
+        "caseRef": case_ref,
+        "status": "PROCESSING",
+        "message": "Screening launched in background task."
+    }
+
+
+@app.get("/api/screening/status/{case_ref}")
+def api_get_screening_status(case_ref: str):
+    """Returns status of background screening task."""
+    if case_ref in _async_screening_jobs:
+        return _async_screening_jobs[case_ref]
+    return {"status": "NOT_FOUND", "caseRef": case_ref}
+
+
 @app.post("/api/screening/analyze")
 def api_analyze(req: AnalyzeReq):
+
     """
     Unified orchestrator — runs the entire 5-stage pipeline in one call.
     Used when the frontend wants a single-shot result (e.g., batch mode).

@@ -103,6 +103,10 @@ const PRAMAAN = (() => {
               </div>
             </div>
             <div class="topbar-right">
+              <div id="bgScreeningBadge" style="display:none; align-items:center; gap:6px; font-size:12px; font-weight:600; padding:4px 12px; border-radius:12px; background:rgba(214,158,46,0.15); color:#D69E2E; margin-right:12px; border:1px solid rgba(214,158,46,0.3);">
+                <span class="dot" style="width:8px; height:8px; border-radius:50%; background:currentColor; display:inline-block;"></span>
+                <span id="bgScreeningLabel">Screening...</span>
+              </div>
               <div class="topbar-clock" id="clock"></div>
               <div class="topbar-divider"></div>
               <div class="topbar-officer">
@@ -119,7 +123,43 @@ const PRAMAAN = (() => {
       </div>`;
   }
 
-  
+  function pollBackgroundScreening() {
+    const activeCase = localStorage.getItem('pramaan_active_bg_case');
+    if (!activeCase) {
+      const badge = document.getElementById('bgScreeningBadge');
+      if (badge) badge.style.display = 'none';
+      return;
+    }
+
+    fetch('/api/screening/status/' + activeCase)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        const badge = document.getElementById('bgScreeningBadge');
+        const label = document.getElementById('bgScreeningLabel');
+        if (!badge || !data || data.status === 'NOT_FOUND') return;
+        badge.style.display = 'inline-flex';
+        if (data.status === 'PROCESSING') {
+          label.textContent = `🔄 Background Screening (${activeCase}) in progress…`;
+          badge.style.background = 'rgba(58,124,165,0.15)';
+          badge.style.color = 'var(--navy)';
+          badge.style.borderColor = 'rgba(58,124,165,0.3)';
+        } else if (data.status === 'COMPLETED') {
+          const res = data.result || {};
+          const isFlag = res.status === 'FLAG' || res.risk_level === 'CRITICAL' || res.risk_level === 'HIGH';
+          label.textContent = isFlag ? `⚠️ Case ${activeCase} Flagged` : `✅ Case ${activeCase} Passed`;
+          badge.style.background = isFlag ? 'rgba(197,48,48,0.15)' : 'rgba(56,161,105,0.15)';
+          badge.style.color = isFlag ? '#C53030' : '#38A169';
+          badge.style.borderColor = isFlag ? 'rgba(197,48,48,0.3)' : 'rgba(56,161,105,0.3)';
+          setTimeout(() => {
+            if (localStorage.getItem('pramaan_active_bg_case') === activeCase) {
+              localStorage.removeItem('pramaan_active_bg_case');
+            }
+          }, 8000);
+        }
+      })
+      .catch(() => {});
+  }
+
   function mount(activeId, opts){
     const sessionStr = sessionStorage.getItem('pramaan_session');
     const isLogin = window.location.pathname.endsWith('login.html');
@@ -129,16 +169,21 @@ const PRAMAAN = (() => {
       return null;
     }
     
-    // Default fallback for layout if session is missing but somehow bypassing redirect
     const session = sessionStr ? JSON.parse(sessionStr) : { badgeId: OFFICER.badge, name: OFFICER.name, role: 'officer' };
 
     document.body.insertAdjacentHTML('afterbegin', '<div class="app-shell" id="appShell"></div>');
     const shell = document.getElementById('appShell');
     shell.innerHTML = renderShell(activeId, session, opts);
     initClock(document.getElementById('clock'));
+    
+    // Start background screening poller
+    pollBackgroundScreening();
+    setInterval(pollBackgroundScreening, 2000);
+
     return document.getElementById('mainContent');
   }
 return { STAGES, hashFromRef, OFFICER, ICONS, truncHash, mount };
 })();
 
 window.PRAMAAN = PRAMAAN;
+
