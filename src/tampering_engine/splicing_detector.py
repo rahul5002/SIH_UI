@@ -7,6 +7,8 @@ from typing import Tuple, Dict, Any, List, Optional
 import cv2
 import numpy as np
 
+from src.config import SPLICING_EDGE_DIVISOR, SPLICING_DETECTION_THRESHOLD
+
 
 class SplicingDetector:
     """
@@ -74,10 +76,10 @@ class SplicingDetector:
         illum_disparity = abs(mean_inner - mean_outer) / 255.0
 
         # Score calculation
-        edge_sharpness_anomaly = min(1.0, avg_border_edge / 80.0)
+        edge_sharpness_anomaly = min(1.0, avg_border_edge / SPLICING_EDGE_DIVISOR)
         splicing_score = round(0.6 * edge_sharpness_anomaly + 0.4 * illum_disparity, 4)
 
-        splicing_detected = splicing_score > 0.45
+        splicing_detected = splicing_score > SPLICING_DETECTION_THRESHOLD
 
         evidence = []
         if splicing_detected:

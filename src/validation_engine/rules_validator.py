@@ -8,6 +8,7 @@ from datetime import datetime
 import re
 
 from src.validation_engine.checksum_validator import ChecksumValidator
+from src.config import ISO_3166_ALPHA3_CODES
 
 
 class DocumentRulesValidator:
@@ -15,13 +16,10 @@ class DocumentRulesValidator:
     Comprehensive rule enforcement engine for Passports, Visas, and National IDs.
     Cross-checks data consistency, validates expiration/DOB, and detects conflicting alterations.
     """
-
-    # Common ISO 3166-1 alpha-3 country codes
-    VALID_COUNTRY_CODES = {
-        "IND", "USA", "GBR", "CAN", "AUS", "DEU", "FRA", "JPN", "SGP", "ARE", 
-        "NZL", "ITA", "ESP", "NLD", "CHE", "SWE", "NOR", "DNK", "FIN", "IRL",
-        "BRA", "ZAF", "CHN", "RUS", "MEX", "IDN", "MYS", "THA", "SAU", "TUR"
-    }
+    """
+    Comprehensive rule enforcement engine for Passports, Visas, and National IDs.
+    Cross-checks data consistency, validates expiration/DOB, and detects conflicting alterations.
+    """
 
     def __init__(self):
         self.checksum_validator = ChecksumValidator()
@@ -72,7 +70,7 @@ class DocumentRulesValidator:
         if not country_code:
             return {"valid": False, "code": None, "issue": "MISSING_COUNTRY_CODE"}
         code = country_code.upper().strip()
-        is_valid = len(code) == 3 and (code in self.VALID_COUNTRY_CODES or code.isalpha())
+        is_valid = len(code) == 3 and code in ISO_3166_ALPHA3_CODES
         return {
             "valid": is_valid,
             "code": code,

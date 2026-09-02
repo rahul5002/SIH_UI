@@ -14,6 +14,7 @@ SIH_UI frontend contract routes  (base64 JSON payloads):
   POST /api/screening/analyze
   GET  /api/audit
   GET  /api/health
+  GET  /api/dashboard/stats
 
 Production multipart-upload routes  (src/api/app.py parity):
   GET  /api/v1/health
@@ -31,12 +32,15 @@ import time
 import uuid
 import base64
 import sqlite3
+import hashlib
+import logging
 import datetime
+import threading
 from typing import List, Optional
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse
@@ -47,12 +51,28 @@ _here = os.path.abspath(os.path.dirname(__file__))
 if _here not in sys.path:
     sys.path.insert(0, _here)
 
+# ── Structured Logging ─────────────────────────────────────────────────────
+log = logging.getLogger("pramaan")
+log.setLevel(logging.INFO)
+if not log.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    ))
+    log.addHandler(_handler)
+
 # ── Real ML Engine imports ──────────────────────────────────────────────────
 from src.preprocessing.preprocessor import DocumentPreprocessor
 from src.ocr_engine.ocr_extractor import OCRExtractor
 from src.validation_engine.rules_validator import DocumentRulesValidator
 from src.tampering_engine.tampering_detector import TamperingDetector
 from src.face_engine.face_matcher import FaceVerificationEngine
+from src.config import (
+    AUTO_FLAG_RISK, FACE_MATCH_MINIMUM,
+    MAX_UPLOAD_SIZE_MB, MAX_BACKGROUND_JOBS, BACKGROUND_JOB_TTL_SECONDS,
+    OVERALL_WEIGHT_TAMPERING, OVERALL_WEIGHT_VALIDATION, OVERALL_WEIGHT_OCR,
+)
 
 # Optional: synthetic generator (may fail if Pillow font resources missing)
 try:
@@ -63,23 +83,12 @@ try:
 except Exception:
     _SYNTH_AVAILABLE = False
 
-# ── ML stub wrappers (maintain existing call-site compatibility) ────────────
-from ml_stubs import ocr as _ocr_stub
-from ml_stubs import tamper as _tamper_stub
-from ml_stubs import face as _face_stub
-from ml_stubs import liveness as _liveness_stub
-from ml_stubs import dedup as _dedup_stub
-
-# =============================================================================
-# CONFIGURATION
-# =============================================================================
-AUTO_FLAG_RISK     = 45.0    # composite risk score (0–100) → auto-flag threshold
-FACE_MATCH_MINIMUM = 0.85    # biometric similarity minimum for auto-clear
+# NOTE: ml_stubs are no longer imported — all routes now use real ML engines.
 
 # =============================================================================
 # ENGINE SINGLETONS  (eager init for fast first-request response)
 # =============================================================================
-print("[PRAMAAN] Initialising ML pipeline engines…")
+log.info("Initialising ML pipeline engines…")
 _preprocessor    = DocumentPreprocessor()
 _ocr_engine      = OCRExtractor()
 _rules_validator = DocumentRulesValidator()
@@ -89,7 +98,7 @@ if _SYNTH_AVAILABLE:
     _synth_gen    = SyntheticDocumentGenerator()
     _tamper_inj   = TamperingInjector()
     _benchmark    = ScreeningBenchmark()
-print("[PRAMAAN] All engines ready.")
+log.info("All engines ready.")
 
 # =============================================================================
 # FASTAPI APP
@@ -105,44 +114,77 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://127.0.0.1:8000", "http://localhost:8000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
+# ── Global Exception Handler ───────────────────────────────────────────────
+@app.exception_handler(Exception)
+async def _global_exception_handler(request: Request, exc: Exception):
+    log.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "status": "ERROR",
+            "score": None,
+            "evidence": [],
+            "reason": f"Internal server error: {type(exc).__name__}",
+            "data": None
+        }
+    )
+
+
 # =============================================================================
-# DATABASE  (SQLite audit ledger)
+# DATABASE  (SQLite audit ledger — WAL mode, thread-safe)
 # =============================================================================
 _DB_PATH = os.path.join(_here, "audit.db")
+_db_lock = threading.Lock()
+
+
+def _get_db_connection():
+    """Creates a new SQLite connection with WAL mode for concurrent read support."""
+    conn = sqlite3.connect(_DB_PATH, check_same_thread=False, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
+
 
 def _init_db():
-    conn = sqlite3.connect(_DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS audit_log (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            case_ref  TEXT,
-            status    TEXT,
-            score     REAL,
-            reason    TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    conn.commit()
-    conn.close()
+    conn = _get_db_connection()
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_ref  TEXT,
+                status    TEXT,
+                score     REAL,
+                reason    TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+    finally:
+        conn.close()
 
 _init_db()
 
+
 def _log_audit(case_ref: str, status: str, score: Optional[float], reason: str):
-    conn = sqlite3.connect(_DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO audit_log (case_ref, status, score, reason) VALUES (?, ?, ?, ?)",
-        (case_ref, status, score, reason)
-    )
-    conn.commit()
-    conn.close()
+    with _db_lock:
+        conn = _get_db_connection()
+        try:
+            conn.execute(
+                "INSERT INTO audit_log (case_ref, status, score, reason) VALUES (?, ?, ?, ?)",
+                (case_ref, status, score, reason)
+            )
+            conn.commit()
+        except Exception as exc:
+            log.error("Audit log write failed for %s: %s", case_ref, exc)
+        finally:
+            conn.close()
 
 # =============================================================================
 # IMAGE HELPERS
@@ -261,8 +303,46 @@ def api_extract(req: ExtractReq):
     """
     Stage 02 — OCR Extraction.
     Decodes base64 document, runs preprocessing → OCR → MRZ parsing.
+    Now wired to the real ML pipeline instead of stubs.
     """
-    return _ocr_stub.perform_ocr(req.documentImage)
+    try:
+        doc_img, _ = _decode_b64(req.documentImage)
+        if doc_img is None:
+            return {"status": "UNAVAILABLE", "score": None, "evidence": [], "reason": "Could not decode document image.", "data": None}
+
+        prep = _preprocessor.process(doc_img)
+        clean_img = prep["processed_image"]
+        ocr_res = _ocr_engine.process(clean_img)
+        log.info("OCR extraction complete — confidence %.4f", ocr_res.get("overall_confidence", 0.0))
+
+        if not ocr_res.get("success"):
+            return {
+                "status": "REVIEW",
+                "score": 0.0,
+                "evidence": ["No text detected by OCR engine."],
+                "reason": "OCR failed — no readable text found.",
+                "data": ocr_res
+            }
+
+        return {
+            "status": "PASS",
+            "score": ocr_res.get("overall_confidence", 0.0),
+            "evidence": [f"{k}: {v}" for k, v in (ocr_res.get("fields") or {}).items() if v],
+            "reason": "OCR extraction complete.",
+            "data": {
+                "name":   (ocr_res.get("fields") or {}).get("full_name"),
+                "docNo":  (ocr_res.get("fields") or {}).get("document_number"),
+                "dob":    (ocr_res.get("fields") or {}).get("date_of_birth"),
+                "expiry": (ocr_res.get("fields") or {}).get("date_of_expiry"),
+                "fields": ocr_res.get("fields"),
+                "mrz":    ocr_res.get("mrz"),
+                "viz":    ocr_res.get("viz"),
+                "field_confidences": ocr_res.get("field_confidences"),
+            }
+        }
+    except Exception as exc:
+        log.error("OCR extraction failed: %s", exc, exc_info=True)
+        return {"status": "UNAVAILABLE", "score": None, "evidence": [], "reason": f"OCR exception: {exc}", "data": None}
 
 
 @app.post("/api/screening/validate")
@@ -310,7 +390,43 @@ def api_validate(req: ValidateReq):
 @app.post("/api/screening/detect")
 def api_detect(req: DetectReq):
     """Stage 04 — Tampering & Forgery Detection (ELA + Noise + Splicing + Font + Metadata)."""
-    return _tamper_stub.detect_tampering(req.documentImage)
+    try:
+        doc_img, doc_bytes = _decode_b64(req.documentImage)
+        if doc_img is None:
+            return {"status": "UNAVAILABLE", "score": None, "evidence": [], "reason": "Could not decode document image.", "data": None}
+
+        prep = _preprocessor.process(doc_img)
+        clean_img = prep["processed_image"]
+        # Run OCR to get tokens for font forensics
+        ocr_res = _ocr_engine.process(clean_img)
+        tamper_res = _tamper_detector.detect(
+            image=clean_img,
+            image_bytes=doc_bytes,
+            ocr_tokens=ocr_res.get("ocr_tokens", []),
+            photo_bbox=None
+        )
+
+        tamper_risk = tamper_res["tampering_score"]  # 0-100
+        log.info("Tamper detection complete — score %.2f, detected=%s", tamper_risk, tamper_res["tampering_detected"])
+
+        return {
+            "status": "FLAG" if tamper_res["tampering_detected"] else "PASS",
+            "score": round(tamper_risk / 100.0, 4),
+            "evidence": tamper_res["reasons"],
+            "reason": tamper_res["verdict"],
+            "data": {
+                "tampering_score":    tamper_risk,
+                "risk_level":         tamper_res["risk_level"],
+                "verdict":            tamper_res["verdict"],
+                "tampering_detected": tamper_res["tampering_detected"],
+                "module_scores":      tamper_res["module_scores"],
+                "evidence_regions":   tamper_res["evidence_regions"],
+                "heatmap_base64":     tamper_res["heatmap_base64"],
+            }
+        }
+    except Exception as exc:
+        log.error("Tamper detection failed: %s", exc, exc_info=True)
+        return {"status": "UNAVAILABLE", "score": None, "evidence": [], "reason": f"Tamper detection exception: {exc}", "data": None}
 
 
 @app.post("/api/screening/verify")
@@ -318,20 +434,60 @@ def api_verify(req: VerifyReq):
     """
     Stage 05 — Face Verification + Liveness.
     faceImage   = live selfie (base64)
-    documentFaceRegion passed as context but face is re-cropped internally from document.
-    For the SIH_UI contract, documentFaceRegion may contain the full doc image as 'docImage'.
+    documentFaceRegion may contain 'docImage' — the full doc for face extraction.
+    Now wired to real face engine.
     """
-    doc_b64  = req.documentFaceRegion.get("docImage", req.faceImage)
-    face_res = _face_stub.verify_face(req.faceImage, doc_b64)
-    liv_res  = _liveness_stub.check_liveness(req.faceImage)
+    try:
+        doc_b64 = req.documentFaceRegion.get("docImage", req.faceImage)
+        doc_img, _ = _decode_b64(doc_b64)
+        live_img, _ = _decode_b64(req.faceImage)
 
-    # Merge liveness into face response data
-    if face_res.get("data") and isinstance(face_res["data"], dict):
-        face_res["data"]["liveness"] = liv_res.get("data") or {}
-    else:
-        face_res["data"] = {"liveness": liv_res.get("data") or {}}
+        if doc_img is None or live_img is None:
+            return {"status": "UNAVAILABLE", "score": None, "evidence": [], "reason": "Could not decode face images.", "data": None}
 
-    return face_res
+        # Preprocess document for better face extraction
+        prep = _preprocessor.process(doc_img)
+        clean_doc = prep["processed_image"]
+
+        face_res = _face_engine.verify_faces(clean_doc, live_img)
+        liv_res = _face_engine.check_liveness_heuristics(live_img)
+        log.info("Face verification complete — match=%s, similarity=%.4f, liveness=%.2f",
+                 face_res.get("is_match"), face_res.get("similarity_score", 0), liv_res.get("liveness_score", 0))
+
+        similarity = face_res.get("similarity_score", 0.0)
+        is_match = face_res.get("is_match", False)
+        is_live = liv_res.get("is_live", False)
+
+        if not face_res.get("success"):
+            status = "REVIEW"
+            reason = face_res.get("message", "Face detection failed.")
+        elif is_match and is_live:
+            status = "PASS"
+            reason = f"Biometric match confirmed — similarity {similarity:.4f}, liveness verified."
+        elif not is_match:
+            status = "FLAG"
+            reason = f"Biometric MISMATCH — similarity {similarity:.4f} below threshold."
+        else:
+            status = "REVIEW"
+            reason = f"Liveness check failed — similarity {similarity:.4f} but possible spoof."
+
+        return {
+            "status": status,
+            "score": similarity,
+            "evidence": [
+                f"Similarity: {similarity:.4f}",
+                f"Liveness: {liv_res.get('liveness_score', 0):.2f}",
+                face_res.get("verdict", "N/A"),
+            ],
+            "reason": reason,
+            "data": {
+                "face_result": face_res,
+                "liveness": liv_res,
+            }
+        }
+    except Exception as exc:
+        log.error("Face verification failed: %s", exc, exc_info=True)
+        return {"status": "UNAVAILABLE", "score": None, "evidence": [], "reason": f"Verification exception: {exc}", "data": None}
 
 
 @app.post("/api/screening/log")
@@ -383,7 +539,6 @@ def api_log(req: LogReq):
 def api_decision(req: DecisionReq):
     """Officer manual decision — anchors to audit ledger."""
     _log_audit(req.caseRef, req.decision.upper(), req.finalScore, "Officer manual decision applied")
-    import hashlib
     block_hash = hashlib.sha256(f"{req.caseRef}{req.decision}{req.finalScore}".encode()).hexdigest()
     return {
         "success":   True,
@@ -391,8 +546,25 @@ def api_decision(req: DecisionReq):
         "timestamp": datetime.datetime.now().isoformat()
     }
 
-
 _async_screening_jobs = {}
+_jobs_lock = threading.Lock()
+
+
+def _cleanup_expired_jobs():
+    """Evicts completed jobs older than TTL and caps total count."""
+    now = datetime.datetime.now()
+    with _jobs_lock:
+        expired_keys = [
+            k for k, v in _async_screening_jobs.items()
+            if v.get("status") in ("COMPLETED", "ERROR")
+            and (now - datetime.datetime.fromisoformat(v.get("startTime", now.isoformat()))).total_seconds() > BACKGROUND_JOB_TTL_SECONDS
+        ]
+        for k in expired_keys:
+            del _async_screening_jobs[k]
+        # Hard cap
+        while len(_async_screening_jobs) > MAX_BACKGROUND_JOBS:
+            oldest_key = next(iter(_async_screening_jobs))
+            del _async_screening_jobs[oldest_key]
 
 
 @app.post("/api/screening/background-run")
@@ -478,13 +650,13 @@ def api_analyze(req: AnalyzeReq):
     if live_img is not None:
         face_report  = _face_engine.verify_faces(clean_img, live_img)
         liv_report   = _face_engine.check_liveness_heuristics(live_img)
-        dedup_report = _dedup_stub.check_deduplication(req.faceImage, req.caseRef)
+        dedup_report = None  # TODO: Implement FAISS-based deduplication engine
 
     # Stage 06: Risk synthesis
     tamper_risk = tamper_res["tampering_score"]                              # 0–100
     val_risk    = (1.0 - val_res["validation_score"]) * 100.0
     ocr_risk    = (1.0 - ocr_res.get("overall_confidence", 0.8)) * 100.0
-    overall_risk = round(0.50 * tamper_risk + 0.35 * val_risk + 0.15 * ocr_risk, 2)
+    overall_risk = round(OVERALL_WEIGHT_TAMPERING * tamper_risk + OVERALL_WEIGHT_VALIDATION * val_risk + OVERALL_WEIGHT_OCR * ocr_risk, 2)
 
     # Verdict
     reasons = []
@@ -577,13 +749,40 @@ def api_analyze(req: AnalyzeReq):
 @app.get("/api/audit")
 def api_audit():
     """Returns last 50 audit log entries for the Audit Log page."""
-    conn = sqlite3.connect(_DB_PATH)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute("SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT 50")
-    rows = [dict(r) for r in c.fetchall()]
-    conn.close()
-    return rows
+    conn = _get_db_connection()
+    try:
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute("SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT 50")
+        rows = [dict(r) for r in c.fetchall()]
+        return rows
+    finally:
+        conn.close()
+
+
+@app.get("/api/dashboard/stats")
+def api_dashboard_stats():
+    """Returns real screening statistics from the audit ledger."""
+    conn = _get_db_connection()
+    try:
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM audit_log")
+        total = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM audit_log WHERE status IN ('FLAGGED_FORGERY_DETECTED', 'FLAG', 'LOGGED')")
+        flagged = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM audit_log WHERE status IN ('REJECTED_EXPIRED_DOCUMENT', 'REJECT')")
+        rejected = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM audit_log WHERE status = 'PASSED_CLEAN'")
+        cleared = c.fetchone()[0]
+        return {
+            "screened": total,
+            "flagged": flagged,
+            "rejected": rejected,
+            "cleared": cleared,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    finally:
+        conn.close()
 
 
 # =============================================================================
@@ -617,6 +816,11 @@ async def v1_screen(
     start    = time.time()
     case_id  = str(uuid.uuid4())[:8].upper()
     doc_bytes = await document.read()
+
+    # File size validation
+    if len(doc_bytes) > MAX_UPLOAD_SIZE_MB * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"File exceeds {MAX_UPLOAD_SIZE_MB}MB limit.")
+
     doc_img   = _decode_bytes(doc_bytes)
 
     prep      = _preprocessor.process(doc_img)
@@ -634,7 +838,7 @@ async def v1_screen(
     tamper_risk = tamper_res["tampering_score"]
     val_risk    = (1.0 - val_res["validation_score"]) * 100.0
     ocr_risk    = (1.0 - ocr_res.get("overall_confidence", 0.8)) * 100.0
-    overall     = round(0.50 * tamper_risk + 0.35 * val_risk + 0.15 * ocr_risk, 2)
+    overall     = round(OVERALL_WEIGHT_TAMPERING * tamper_risk + OVERALL_WEIGHT_VALIDATION * val_risk + OVERALL_WEIGHT_OCR * ocr_risk, 2)
 
     if overall < 30 and val_res["verdict"] == "PASSED" and not tamper_res["tampering_detected"]:
         verdict, rlevel = "PASSED_CLEAN",              "LOW"

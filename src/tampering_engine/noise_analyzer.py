@@ -6,6 +6,9 @@ Detects splicing, cloning, and photo swaps by measuring sensor noise distributio
 from typing import Tuple, Dict, Any, List
 import cv2
 import numpy as np
+import pywt
+
+from src.config import NOISE_BLOCK_SIZE, NOISE_Z_SCORE_THRESHOLD, NOISE_CV_DIVISOR
 
 
 class NoiseAnalyzer:
@@ -25,7 +28,7 @@ class NoiseAnalyzer:
         residual = cv2.absdiff(gray, denoised)
         return residual
 
-    def compute_noise_map(self, image: np.ndarray, block_size: int = 24) -> Tuple[np.ndarray, float, List[Dict[str, Any]]]:
+    def compute_noise_map(self, image: np.ndarray, block_size: int = NOISE_BLOCK_SIZE) -> Tuple[np.ndarray, float, List[Dict[str, Any]]]:
         """
         Calculates local noise variance across overlapping blocks.
         Returns:
@@ -48,7 +51,7 @@ class NoiseAnalyzer:
 
         # Score based on coefficient of variation (std / mean)
         cv = global_std / (global_mean + 1e-5)
-        inconsistency_score = min(1.0, cv / 1.5)
+        inconsistency_score = min(1.0, cv / NOISE_CV_DIVISOR)
 
         # Detect outlier blocks
         anomalies = []
@@ -56,7 +59,7 @@ class NoiseAnalyzer:
             for bx in range(noise_map.shape[1]):
                 val = noise_map[by, bx]
                 z_score = abs(val - global_mean) / global_std
-                if z_score > 3.0:
+                if z_score > NOISE_Z_SCORE_THRESHOLD:
                     px = bx * block_size
                     py = by * block_size
                     anomalies.append({

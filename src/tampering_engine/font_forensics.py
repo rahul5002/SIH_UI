@@ -7,6 +7,11 @@ from typing import Dict, Any, List
 import cv2
 import numpy as np
 
+from src.config import (
+    FONT_HEIGHT_DEVIATION_PX, FONT_HEIGHT_RATIO, FONT_BASELINE_JITTER_PX,
+    FONT_ANOMALY_SCORE_PER_TOKEN, FONT_MIN_TOKENS, FONT_LINE_CLUSTER_PX
+)
+
 
 class FontForensicsAnalyzer:
     """
@@ -20,7 +25,7 @@ class FontForensicsAnalyzer:
         Analyzes geometric consistency of OCR bounding boxes.
         Groups text into horizontal lines and checks for height and baseline anomalies.
         """
-        if not ocr_tokens or len(ocr_tokens) < 3:
+        if not ocr_tokens or len(ocr_tokens) < FONT_MIN_TOKENS:
             return {
                 "font_anomaly_detected": False,
                 "anomaly_score": 0.0,
@@ -38,7 +43,7 @@ class FontForensicsAnalyzer:
 
         for tok in sorted_tokens[1:]:
             prev_y = current_line[-1]["bbox"]["y"]
-            if abs(tok["bbox"]["y"] - prev_y) <= 15:
+            if abs(tok["bbox"]["y"] - prev_y) <= FONT_LINE_CLUSTER_PX:
                 current_line.append(tok)
             else:
                 lines.append(current_line)
@@ -66,7 +71,7 @@ class FontForensicsAnalyzer:
                 base_diff = abs((t["bbox"]["y"] + t["bbox"]["height"]) - mean_base)
 
                 # Check if this token deviates significantly
-                if (h_diff > 12 and h_diff > 0.4 * mean_h) or (base_diff > 10):
+                if (h_diff > FONT_HEIGHT_DEVIATION_PX and h_diff > FONT_HEIGHT_RATIO * mean_h) or (base_diff > FONT_BASELINE_JITTER_PX):
                     flagged.append({
                         "text": t["text"],
                         "bbox": t["bbox"],
@@ -75,7 +80,7 @@ class FontForensicsAnalyzer:
                         "reason": f"Font baseline/height anomaly on token '{t['text']}' (Suspected Altered Text or Pasted Digit)"
                     })
 
-        anomaly_score = min(1.0, len(flagged) * 0.25)
+        anomaly_score = min(1.0, len(flagged) * FONT_ANOMALY_SCORE_PER_TOKEN)
 
         return {
             "font_anomaly_detected": len(flagged) > 0,

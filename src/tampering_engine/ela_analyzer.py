@@ -9,6 +9,11 @@ import cv2
 import numpy as np
 from PIL import Image, ImageChops, ImageEnhance
 
+from src.config import (
+    ELA_QUALITY, ELA_MULTIPLIER, ELA_MEAN_ERROR_DIVISOR,
+    ELA_ANOMALY_WEIGHT, ELA_GRID_SIZE, ELA_THRESHOLD_STD, ELA_MIN_INTENSITY
+)
+
 
 class ELAAnalyzer:
     """
@@ -17,7 +22,7 @@ class ELAAnalyzer:
     compression error levels compared to the original unmodified sections.
     """
 
-    def __init__(self, quality: int = 90, multiplier: float = 15.0):
+    def __init__(self, quality: int = ELA_QUALITY, multiplier: float = ELA_MULTIPLIER):
         self.quality = quality
         self.multiplier = multiplier
 
@@ -66,8 +71,8 @@ class ELAAnalyzer:
     def detect_anomalous_regions(
         self, 
         ela_gray: np.ndarray, 
-        grid_size: int = 32, 
-        threshold_std: float = 2.2
+        grid_size: int = ELA_GRID_SIZE, 
+        threshold_std: float = ELA_THRESHOLD_STD
     ) -> List[Dict[str, Any]]:
         """
         Scans localized grid cells to detect patches with statistically significant ELA deviation.
@@ -84,7 +89,7 @@ class ELAAnalyzer:
                 cell = ela_gray[y:y + grid_size, x:x + grid_size]
                 cell_mean = np.mean(cell)
 
-                if cell_mean > threshold and cell_mean > 25.0:
+                if cell_mean > threshold and cell_mean > ELA_MIN_INTENSITY:
                     deviation = (cell_mean - global_mean) / (global_std + 1e-5)
                     anomalies.append({
                         "bbox": {"x": x, "y": y, "width": grid_size, "height": grid_size},

@@ -13,6 +13,12 @@ from src.tampering_engine.noise_analyzer import NoiseAnalyzer
 from src.tampering_engine.splicing_detector import SplicingDetector
 from src.tampering_engine.font_forensics import FontForensicsAnalyzer
 from src.tampering_engine.metadata_analyzer import MetadataAnalyzer
+from src.config import (
+    TAMPER_WEIGHT_ELA, TAMPER_WEIGHT_NOISE, TAMPER_WEIGHT_SPLICING,
+    TAMPER_WEIGHT_FONT, TAMPER_WEIGHT_METADATA,
+    TAMPER_THRESHOLD_CLEAN, TAMPER_THRESHOLD_LOW_RISK, TAMPER_THRESHOLD_HIGH_RISK,
+    ELA_MEAN_ERROR_DIVISOR, ELA_ANOMALY_WEIGHT
+)
 
 
 class TamperingDetector:
@@ -76,7 +82,7 @@ class TamperingDetector:
         # 1. Error Level Analysis (ELA)
         ela_bgr, ela_gray, mean_ela_error = self.ela_analyzer.compute_ela(image)
         ela_anomalies = self.ela_analyzer.detect_anomalous_regions(ela_gray)
-        ela_score = min(1.0, (mean_ela_error / 45.0) + (len(ela_anomalies) * 0.15))
+        ela_score = min(1.0, (mean_ela_error / ELA_MEAN_ERROR_DIVISOR) + (len(ela_anomalies) * ELA_ANOMALY_WEIGHT))
 
         # 2. Noise Variance Residuals
         noise_map, noise_score, noise_anomalies = self.noise_analyzer.compute_noise_map(image)
@@ -95,11 +101,11 @@ class TamperingDetector:
 
         # Weighted Ensemble Risk Score (0.0 to 1.0 -> 0 to 100 scale)
         weights = {
-            "ela": 0.30,
-            "noise": 0.25,
-            "splicing": 0.25,
-            "font": 0.15,
-            "metadata": 0.05
+            "ela": TAMPER_WEIGHT_ELA,
+            "noise": TAMPER_WEIGHT_NOISE,
+            "splicing": TAMPER_WEIGHT_SPLICING,
+            "font": TAMPER_WEIGHT_FONT,
+            "metadata": TAMPER_WEIGHT_METADATA
         }
 
         combined_score = (
@@ -113,13 +119,13 @@ class TamperingDetector:
         tampering_percentage = round(float(combined_score * 100), 2)
 
         # Classify Risk Level
-        if tampering_percentage < 25.0:
+        if tampering_percentage < TAMPER_THRESHOLD_CLEAN:
             risk_level = "CLEAN"
             verdict = "GENUINE_DOCUMENT"
-        elif tampering_percentage < 45.0:
+        elif tampering_percentage < TAMPER_THRESHOLD_LOW_RISK:
             risk_level = "LOW_RISK"
             verdict = "MINOR_IRREGULARITIES"
-        elif tampering_percentage < 70.0:
+        elif tampering_percentage < TAMPER_THRESHOLD_HIGH_RISK:
             risk_level = "HIGH_RISK"
             verdict = "SUSPECTED_FORGERY"
         else:
@@ -159,7 +165,7 @@ class TamperingDetector:
             "tampering_score": tampering_percentage,
             "risk_level": risk_level,
             "verdict": verdict,
-            "tampering_detected": tampering_percentage >= 45.0,
+            "tampering_detected": tampering_percentage >= TAMPER_THRESHOLD_LOW_RISK,
             "module_scores": {
                 "ela_score": round(ela_score * 100, 2),
                 "noise_inconsistency": round(noise_score * 100, 2),

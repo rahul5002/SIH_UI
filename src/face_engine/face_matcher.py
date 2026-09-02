@@ -30,10 +30,18 @@ class FaceVerificationEngine:
         self.session = ort.InferenceSession(model_path, providers=providers)
         self.input_name = self.session.get_inputs()[0].name
 
+        # Initialize Haar Cascade for face detection (if available in this OpenCV build)
+        cascade_path = getattr(cv2, 'data', None) and cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        if cascade_path and os.path.exists(cascade_path) and hasattr(cv2, 'CascadeClassifier'):
+            self._face_cascade = cv2.CascadeClassifier(cascade_path)
+        else:
+            print("[WARNING] Haar cascade not available or not found. Falling back to skin-tone segmentation.")
+            self._face_cascade = None
+
     def detect_and_crop_face(self, image: np.ndarray, is_document: bool = False) -> Tuple[Optional[np.ndarray], Optional[Dict[str, int]]]:
         """
-        Detects primary face in document or selfie using skin-tone color segmentation,
-        elliptical contour analysis, and positional priors.
+        Detects primary face in document or selfie.
+        Uses OpenCV Haar cascade as primary detector, with skin-tone segmentation as fallback.
         """
         if image is None or image.size == 0:
             return None, None
@@ -48,37 +56,48 @@ class FaceVerificationEngine:
             search_roi = image
             offset_x, offset_y = 0, 0
 
-        # 2. Skin tone segmentation in HSV color space
-        hsv = cv2.cvtColor(search_roi, cv2.COLOR_BGR2HSV)
-        lower_skin = np.array([0, 25, 40], dtype=np.uint8)
-        upper_skin = np.array([30, 255, 255], dtype=np.uint8)
-        mask = cv2.inRange(hsv, lower_skin, upper_skin)
-
-        # Morphological filtering to merge facial clusters
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-        mask = cv2.dilate(mask, kernel, iterations=1)
-
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
         best_box = None
-        max_area = 0
 
-        min_face_area = (h * w) * 0.015
+        # ── Primary: Haar Cascade face detection ──────────────────────────
+        if self._face_cascade is not None:
+            gray_roi = cv2.cvtColor(search_roi, cv2.COLOR_BGR2GRAY) if len(search_roi.shape) == 3 else search_roi
+            faces = self._face_cascade.detectMultiScale(
+                gray_roi, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+            )
+            if len(faces) > 0:
+                # Pick largest detected face
+                largest = max(faces, key=lambda f: f[2] * f[3])
+                fx, fy, fw, fh = largest
+                best_box = (fx + offset_x, fy + offset_y, fw, fh)
 
-        for c in contours:
-            area = cv2.contourArea(c)
-            if area > min_face_area:
-                x, y, cw, ch = cv2.boundingRect(c)
-                aspect_ratio = float(ch) / (cw + 1e-5)
-                # Face aspect ratio is typically vertical oval (0.85 to 2.2)
-                if 0.8 <= aspect_ratio <= 2.5:
-                    if area > max_area:
-                        max_area = area
-                        best_box = (x + offset_x, y + offset_y, cw, ch)
+        # ── Fallback: Skin-tone segmentation ──────────────────────────────
+        if best_box is None:
+            hsv = cv2.cvtColor(search_roi, cv2.COLOR_BGR2HSV)
+            lower_skin = np.array([0, 25, 40], dtype=np.uint8)
+            upper_skin = np.array([30, 255, 255], dtype=np.uint8)
+            mask = cv2.inRange(hsv, lower_skin, upper_skin)
+
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+            mask = cv2.dilate(mask, kernel, iterations=1)
+
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            max_area = 0
+            min_face_area = (h * w) * 0.015
+
+            for c in contours:
+                area = cv2.contourArea(c)
+                if area > min_face_area:
+                    x, y, cw, ch = cv2.boundingRect(c)
+                    aspect_ratio = float(ch) / (cw + 1e-5)
+                    if 0.8 <= aspect_ratio <= 2.5:
+                        if area > max_area:
+                            max_area = area
+                            best_box = (x + offset_x, y + offset_y, cw, ch)
 
         if best_box is None:
-            # Fallback: crop center region for avatar/selfie, or standard left photo box for document
+            # Last resort: crop standard region
             if is_document:
                 bx = int(w * 0.05)
                 by = int(h * 0.17)

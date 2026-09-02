@@ -1,3 +1,10 @@
 fastapi
-uvicorn
+uvicorn[standard]
 pydantic
+opencv-python-headless
+numpy
+Pillow
+easyocr
+onnxruntime
+python-multipart
+PyWavelets

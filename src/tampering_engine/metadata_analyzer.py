@@ -7,6 +7,8 @@ import io
 from typing import Dict, Any, List
 from PIL import Image, ExifTags
 
+from src.config import METADATA_SCAN_BYTES_HEAD, METADATA_SCAN_BYTES_TAIL
+
 
 class MetadataAnalyzer:
     """
@@ -45,13 +47,16 @@ class MetadataAnalyzer:
                                 findings.append(f"EDITING_SOFTWARE_DETECTED: Created/Modified with '{val}'")
                                 break
 
-            # Raw byte string scan for software metadata markers
-            raw_str = image_bytes[:4096].lower()
+            # Raw byte string scan for software metadata markers (head and tail)
+            raw_str = image_bytes[:METADATA_SCAN_BYTES_HEAD].lower()
+            if len(image_bytes) > METADATA_SCAN_BYTES_TAIL:
+                raw_str += image_bytes[-METADATA_SCAN_BYTES_TAIL:].lower()
+                
             for kw in self.SUSPICIOUS_SOFTWARE_KEYWORDS:
                 if kw.encode('utf-8') in raw_str:
                     if not software_detected:
                         software_detected = kw.capitalize()
-                        findings.append(f"SOFTWARE_SIGNATURE_FOUND: Signature '{kw}' found in file header")
+                        findings.append(f"SOFTWARE_SIGNATURE_FOUND: Signature '{kw}' found in file header/trailer")
 
         except Exception as e:
             findings.append(f"METADATA_PARSE_ERROR: {str(e)}")
