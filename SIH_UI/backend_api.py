@@ -692,10 +692,10 @@ app.mount("/assets", StaticFiles(directory=os.path.join(_here, "assets")), name=
 
 # Named HTML pages
 _pages = [
-    ("",                "screening.html"),
-    ("index.html",      "screening.html"),
-    ("dashboard",       "screening.html"),
-    ("dashboard.html",  "screening.html"),
+    ("",                "index.html"),
+    ("index.html",      "index.html"),
+    ("dashboard",       "index.html"),
+    ("dashboard.html",  "index.html"),
     ("screening",       "screening.html"),
     ("screening.html",   "screening.html"),
     ("audit",           "audit.html"),
@@ -709,6 +709,7 @@ _pages = [
     ("login",           "login.html"),
     ("login.html",      "login.html"),
 ]
+
 
 
 

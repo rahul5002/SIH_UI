@@ -52,13 +52,14 @@ const PRAMAAN = (() => {
   }
 
   const NAV = [
-    { id:"dashboard",   href:"screening.html",   label:"Dashboard",   icon:"dashboard" },
+    { id:"dashboard",   href:"index.html",       label:"Dashboard",   icon:"dashboard" },
     { id:"screening",   href:"screening.html",   label:"Screening",   icon:"screening" },
     { id:"audit",       href:"audit.html",       label:"Audit Log",   icon:"audit" },
     { id:"checkpoints", href:"checkpoints.html", label:"Checkpoints", icon:"checkpoints" },
     { id:"alerts",      href:"alerts.html",      label:"Alerts",      icon:"alerts" },
     { id:"settings",    href:"settings.html",    label:"Settings",    icon:"settings" },
   ];
+
 
 
   function renderShell(activeId, opts){
