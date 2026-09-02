@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="assets/fonts/inter.css">
 <link rel="stylesheet" href="assets/fonts/jetbrains-mono.css">
 <link rel="stylesheet" href="css/styles.css">
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 </head>
 <body>
 <a class="skip-link" href="#badgeId">Skip to login form</a>
@@ -168,6 +169,65 @@ document.getElementById('btnReqOtp').addEventListener('click', function() {
   }
 });
 
+/**
+ * ---------------------------------------------------------------------
+ * Login security audit hook (EmailJS)
+ * ---------------------------------------------------------------------
+ * Fires once on every SUCCESSFUL sign-in. Sends only the officer's
+ * badge ID (service ID) and a timestamp to the security audit mailbox
+ * for login monitoring — the PIN is never included in this email.
+ *
+ * SETUP REQUIRED before this will actually send anything:
+ *   1. Create a free account at https://www.emailjs.com
+ *   2. Add an Email Service (e.g. Gmail) → copy its Service ID below.
+ *   3. Create an Email Template with these variable placeholders in
+ *      the template body, e.g.:
+ *        To: {{to_email}}
+ *        Subject: PRAMAAN AI — Login Alert
+ *        Body:
+ *          Officer badge ID: {{badge_id}}
+ *          Login time: {{login_time}}
+ *          Checkpoint node: {{node_id}}
+ *      → copy that Template ID below.
+ *   4. Account → General → copy your Public Key below.
+ * EmailJS is safe to call directly from the browser (that's its whole
+ * design) — the Public Key only authorizes sending through templates
+ * you control, it isn't a secret credential.
+ * ---------------------------------------------------------------------
+ */
+const EMAILJS_PUBLIC_KEY  = 'dTWckZq-kTkL02EQ9';   // from EmailJS → Account → General
+const EMAILJS_SERVICE_ID  = 'service_014ukqm';      // from EmailJS → Email Services
+const EMAILJS_TEMPLATE_ID = 'template_e6vmwj4';     // from EmailJS → Email Templates
+const AUDIT_NOTIFY_EMAIL  = 'mankanirahul@gmail.com';
+
+emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
+
+async function notifyLoginEvent(badgeId) {
+  const timestamp = new Date().toISOString();
+  const templateParams = {
+    to_email: AUDIT_NOTIFY_EMAIL,
+    badge_id: badgeId,
+    login_time: timestamp,
+    node_id: 'BOP-RAX-04'
+  };
+
+  // Local, tamper-evident audit trail — kept even if the email fails to
+  // send, so a login is never silently unrecorded.
+  try {
+    const trail = JSON.parse(sessionStorage.getItem('pramaan_login_audit') || '[]');
+    trail.push(templateParams);
+    sessionStorage.setItem('pramaan_login_audit', JSON.stringify(trail));
+  } catch (_) { /* storage unavailable — non-blocking */ }
+
+  try {
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, templateParams);
+  } catch (err) {
+    // Non-blocking by design: a failed alert must never prevent a legitimate,
+    // already-authenticated officer from getting into the console.
+    console.warn('Login alert email not sent — check your EmailJS IDs above.', err);
+  }
+}
+
 // Login Form Submit
 document.getElementById('loginForm').addEventListener('submit', async function(e){
   e.preventDefault();
@@ -205,6 +265,10 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
     
     const res = await API.authLogin(b.value.trim(), p.value.trim());
     sessionStorage.setItem('pramaan_session', JSON.stringify(res));
+
+    // Security audit: alert on every successful sign-in (badge ID + timestamp only)
+    await notifyLoginEvent(b.value.trim());
+
     window.location.href = 'index.html';
   } catch (err) {
     bGroup.classList.add('error');
