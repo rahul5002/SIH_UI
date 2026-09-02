@@ -24,4 +24,4 @@ if __name__ == "__main__":
     print("  [*] Interactive Swagger API Docs at http://127.0.0.1:8000/docs")
     print("==================================================================")
     
-    uvicorn.run("src.api.app:app", host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run("SIH_UI.backend_api:app", host="127.0.0.1", port=8000, reload=False)

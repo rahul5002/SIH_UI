@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alerts — PRAMAAN AI</title>
+<link rel="stylesheet" href="assets/fonts/inter.css">
+<link rel="stylesheet" href="assets/fonts/jetbrains-mono.css">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<script src="js/config.js"></script>
+<script src="js/mock-api.js"></script>
+<script src="js/app.js"></script>
+<script>
+const main = PRAMAAN.mount('alerts');
+
+main.innerHTML = `
+  <div class="page-head">
+    <div>
+      <h1>System alerts</h1>
+      <div class="page-sub">Unresolved notifications requiring officer attention</div>
+    </div>
+    <button class="btn btn-sm">Acknowledge all</button>
+  </div>
+  <div class="panel">
+    <div class="alerts-list" id="alertsList">
+      <div style="color:var(--text-secondary); font-size:13px; padding:24px;">Loading alerts…</div>
+    </div>
+  </div>
+`;
+
+const typeMap = {
+  reject: ['#C53030', PRAMAAN.ICONS.x],
+  flag:   ['#D69E2E', PRAMAAN.ICONS.flagIcon],
+  sync:   ['#3A7CA5', PRAMAAN.ICONS.sync],
+};
+
+async function renderAlerts() {
+  const data = await API.fetchAlerts();
+  if (!data || data.length === 0) {
+    document.getElementById('alertsList').innerHTML = '<div style="color:var(--text-secondary); font-size:13px; padding:24px;">No active alerts. System is operating normally.</div>';
+    return;
+  }
+  document.getElementById('alertsList').innerHTML = data.map(a => {
+    const [color, icon] = typeMap[a.type] || ['#888', ''];
+    return `
+      <div class="alert-item">
+        <div class="icon" style="background:${color}15; color:${color};">${icon}</div>
+        <div class="content">
+          <div class="title" style="color:${color};">${a.title}</div>
+          <div class="desc">${a.desc}</div>
+        </div>
+        <div class="when">${a.when}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+renderAlerts();
+</script>
+</body>
+</html>

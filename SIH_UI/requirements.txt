@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
+opencv-python
+numpy
+easyocr
+torch
+torchvision
+Pillow
+onnx
+onnxruntime

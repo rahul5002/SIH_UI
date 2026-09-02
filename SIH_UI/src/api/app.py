@@ -250,14 +250,10 @@ def run_benchmark(num_samples: int = 8):
 
 
 # Static Files & Dashboard Mount
-sih_ui_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "SIH_UI"))
-if os.path.exists(sih_ui_dir):
-    app.mount("/css", StaticFiles(directory=os.path.join(sih_ui_dir, "css")), name="css")
-    app.mount("/js", StaticFiles(directory=os.path.join(sih_ui_dir, "js")), name="js")
-    app.mount("/assets", StaticFiles(directory=os.path.join(sih_ui_dir, "assets")), name="assets")
+web_dir = os.path.join(os.path.dirname(__file__), "..", "web")
+if os.path.exists(web_dir):
+    app.mount("/static", StaticFiles(directory=web_dir), name="static")
 
     @app.get("/")
     def serve_dashboard():
-        return FileResponse(os.path.join(sih_ui_dir, "screening.html"))
-
-
+        return FileResponse(os.path.join(web_dir, "index.html"))
