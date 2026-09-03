@@ -83,7 +83,8 @@ class OCRExtractor:
             y_pos = item["bbox"]["y"]
 
             # Strong indicator of MRZ: contains '<' or located in bottom region with typical MRZ format
-            if ('<' in text or y_pos >= mrz_threshold_y) and len(re.sub(r'[^A-Z0-9<]', '', text.upper())) >= 15:
+            # MRZ lines typically do not have spaces
+            if ('<' in text or y_pos >= mrz_threshold_y) and len(re.sub(r'[^A-Z0-9<]', '', text.upper())) >= 15 and text.count(' ') < 3:
                 mrz_items.append(item)
             else:
                 viz_items.append(item)
@@ -103,15 +104,21 @@ class OCRExtractor:
 
         # Regex patterns for common fields
         doc_num_pattern = re.compile(r'\b([A-Z][0-9]{7,8}|[A-Z0-9]{8,10})\b')
+        aadhaar_pattern = re.compile(r'\b(\d{4}[\s\-]?\d{4}[\s\-]?\d{4})\b')
         date_pattern = re.compile(r'\b(\d{2}[\/\-\.]\d{2}[\/\-\.]\d{4}|\d{4}[\/\-\.]\d{2}[\/\-\.]\d{2})\b')
         gender_pattern = re.compile(r'\b(SEX|GENDER)[\s:\/\-]*([MFX])\b', re.IGNORECASE)
 
         # Search patterns
         doc_matches = doc_num_pattern.findall(viz_text)
+        aadhaar_matches = aadhaar_pattern.findall(viz_text)
         date_matches = date_pattern.findall(viz_text)
         gender_matches = gender_pattern.findall(viz_text)
 
-        extracted_doc_num = doc_matches[0] if doc_matches else None
+        if aadhaar_matches:
+            extracted_doc_num = aadhaar_matches[0].replace(" ", "").replace("-", "")
+        else:
+            extracted_doc_num = doc_matches[0] if doc_matches else None
+            
         gender = gender_matches[0][1].upper() if gender_matches else None
 
         # Positional field parsing

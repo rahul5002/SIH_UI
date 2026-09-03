@@ -172,6 +172,33 @@ main.innerHTML = `
     </div>
 
   </div>
+  
+  <!-- Face Capture Modal -->
+  <div id="faceModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(10,15,25,0.95); z-index:9999; flex-direction:column; align-items:center; justify-content:center; backdrop-filter:blur(5px);">
+    <h2 style="color:#fff; margin-bottom:8px; font-weight:600; font-size:24px;">Live Facial Scanning</h2>
+    <p style="color:#A0AEC0; margin-bottom:32px; font-size:15px;">Please align your face within the oval area.</p>
+    
+    <div style="position:relative; width:480px; height:480px; border-radius:12px; overflow:hidden; background:#000; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+      <video id="modalFaceVideo" autoplay playsinline style="width:100%; height:100%; object-fit:cover; transform: scaleX(-1);"></video>
+      
+      <!-- Oval Cutout Overlay using SVG mask -->
+      <svg viewBox="0 0 480 480" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none;">
+        <defs>
+          <mask id="oval-mask">
+            <rect width="100%" height="100%" fill="white" />
+            <ellipse cx="240" cy="240" rx="130" ry="170" fill="black" />
+          </mask>
+        </defs>
+        <rect width="100%" height="100%" fill="rgba(16, 27, 46, 0.75)" mask="url(#oval-mask)" />
+        <ellipse cx="240" cy="240" rx="130" ry="170" fill="none" stroke="#3A7CA5" stroke-width="2" stroke-dasharray="8 6" />
+      </svg>
+    </div>
+    
+    <div style="display:flex; gap:16px; margin-top:40px;">
+       <button class="btn" id="btnModalCancelFace" style="padding: 12px 28px; font-size:15px; border:1px solid #4A5568; background:transparent; color:#fff;">Cancel</button>
+       <button class="btn" id="btnModalCaptureFace" style="background:#38A169; color:#fff; padding: 12px 28px; font-size:15px; border:none; font-weight:600;">Capture Face</button>
+    </div>
+  </div>
 `;
 
 // ---- Render pipeline rail ----
@@ -564,20 +591,15 @@ document.getElementById('btnCancelDoc').addEventListener('click',   cancelDocCam
 async function startFaceCamera() {
   stopStream(faceStream);
   faceStream = null;
-  const video   = document.getElementById('faceVideo');
-  const faceSvg = document.getElementById('faceSvg');
-  const preview = document.getElementById('facePreview');
+  const video = document.getElementById('modalFaceVideo');
+  
   try {
     faceStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
       audio: false
     });
     video.srcObject = faceStream;
-    video.style.display   = 'block';
-    faceSvg.style.display = 'none';
-    preview.style.display = 'none';
-    document.getElementById('faceCaptureActions').style.display = 'none';
-    document.getElementById('faceActiveActions').style.display  = 'flex';
+    document.getElementById('faceModal').style.display = 'flex';
     showCaptureError('');
   } catch (err) {
     stopStream(faceStream);
@@ -586,34 +608,44 @@ async function startFaceCamera() {
       ? 'Camera access denied for face capture.'
       : 'No camera found for face capture.';
     showCaptureError(msg);
-    document.getElementById('faceCaptureActions').style.display = 'flex';
-    document.getElementById('faceActiveActions').style.display  = 'none';
   }
 }
 
 function captureFaceFromCamera() {
-  const video = document.getElementById('faceVideo');
+  const video = document.getElementById('modalFaceVideo');
   const dataUrl = captureFrameFromVideo(video);
   if (!basicImageQualityCheck(dataUrl)) {
-    showCaptureError('Face capture quality insufficient — please retry.');
+    alert('Face capture quality insufficient — please retry.');
     return;
   }
-  stopStream(faceStream);
-  faceStream = null;
-  capturedFaceImage = dataUrl;
-  showFacePreview(dataUrl);
-  updateRunButton();
+  
+  // Mirror the image horizontally because we display it mirrored
+  const img = new Image();
+  img.onload = function() {
+    snapCanvas.width = img.width;
+    snapCanvas.height = img.height;
+    const ctx = snapCanvas.getContext('2d');
+    ctx.translate(snapCanvas.width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(img, 0, 0);
+    const flippedDataUrl = snapCanvas.toDataURL('image/jpeg', 0.92);
+    
+    stopStream(faceStream);
+    faceStream = null;
+    document.getElementById('faceModal').style.display = 'none';
+    capturedFaceImage = flippedDataUrl;
+    showFacePreview(flippedDataUrl);
+    updateRunButton();
+  };
+  img.src = dataUrl;
 }
 
 function cancelFaceCamera() {
   stopStream(faceStream);
   faceStream = null;
-  const video = document.getElementById('faceVideo');
-  video.style.display = 'none';
+  const video = document.getElementById('modalFaceVideo');
   video.srcObject = null;
-  document.getElementById('faceSvg').style.display      = 'block';
-  document.getElementById('faceCaptureActions').style.display = 'flex';
-  document.getElementById('faceActiveActions').style.display  = 'none';
+  document.getElementById('faceModal').style.display = 'none';
   showCaptureError('');
 }
 
@@ -644,13 +676,13 @@ function resetFaceCapture() {
   faceSvg.style.display  = 'block';
   document.getElementById('faceCaptureActions').style.display = 'flex';
   document.getElementById('faceActiveActions').style.display  = 'none';
-  document.getElementById('btnStartFaceCam').textContent = 'Start face camera';
+    document.getElementById('btnStartFaceCam').textContent = 'Start face camera';
   updateRunButton();
 }
 
 document.getElementById('btnStartFaceCam').addEventListener('click',  startFaceCamera);
-document.getElementById('btnCaptureFace').addEventListener('click',   captureFaceFromCamera);
-document.getElementById('btnCancelFace').addEventListener('click',    cancelFaceCamera);
+document.getElementById('btnModalCaptureFace').addEventListener('click', captureFaceFromCamera);
+document.getElementById('btnModalCancelFace').addEventListener('click',  cancelFaceCamera);
 
 // --- NEW CAPTURE / RESTART ---
 function fullReset() {
