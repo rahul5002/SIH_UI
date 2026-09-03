@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Screening — PRAMAAN AI</title>
+<link rel="stylesheet" href="assets/fonts/inter.css">
+<link rel="stylesheet" href="assets/fonts/jetbrains-mono.css">
+<link rel="stylesheet" href="css/styles.css">
+<script src="assets/js/chart.umd.min.js"></script>
+</head>
+<body>
+<script src="js/config.js"></script>
+<script src="js/mock-api.js"></script>
+<script src="js/app.js"></script>
+<script>
+const main = PRAMAAN.mount('screening');
+
+// ---- Build page skeleton first, then attach JS logic ----
+main.innerHTML = `
+  <div class="page-head">
+    <div>
+      <h1>Screening pipeline</h1>
+      <div class="page-sub">Case ref <span class="mono">RAX-20260902-0312</span> · Started 23:44:02 IST</div>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn" id="restartBtn">↺ New capture</button>
+      <button class="btn" id="sampleCleanBtn">✅ Genuine Passport</button>
+      <button class="btn" id="sampleTamperBtn">⚠️ Photo Swap</button>
+      <button class="btn" id="sampleDateBtn">📝 Altered Expiry</button>
+      <button class="btn" id="sampleStampBtn">🔏 Fake Stamp</button>
+    </div>
+  </div>
+
+
+  <div class="screen-grid">
+
+    <!-- LEFT: document capture panel -->
+    <div class="panel">
+      <div class="panel-head"><h2>Capture</h2><span class="meta" id="docTypeLbl">Passport (MRZ)</span></div>
+      <div class="panel-body">
+        <div class="capture-frame" id="captureFrame">
+          <svg viewBox="0 0 220 280" width="88%" style="opacity:0.95; position:absolute; z-index:1;" id="docSvg">
+            <rect x="6" y="6" width="208" height="268" rx="6" fill="#16233A" stroke="#3A7CA5" stroke-width="1"/>
+            <rect x="20" y="24" width="70" height="88" rx="3" fill="#223B57"/>
+            <circle cx="55" cy="58" r="18" fill="#2E5372"/>
+            <path d="M32 100 q23 -22 46 0" fill="#2E5372"/>
+            <rect x="100" y="28" width="98" height="9" rx="2" fill="#2E5372"/>
+            <rect x="100" y="44" width="80" height="9" rx="2" fill="#2E5372"/>
+            <rect x="100" y="60" width="90" height="9" rx="2" fill="#2E5372"/>
+            <rect x="100" y="76" width="60" height="9" rx="2" fill="#2E5372"/>
+            <rect x="20" y="130" width="178" height="9" rx="2" fill="#1E344F"/>
+            <rect x="20" y="146" width="178" height="9" rx="2" fill="#1E344F"/>
+            <rect x="20" y="230" width="178" height="11" rx="2" fill="#274A6E"/>
+            <rect x="20" y="246" width="178" height="11" rx="2" fill="#274A6E"/>
+          </svg>
+          <video id="docVideo" autoplay playsinline style="display:none; width:100%; height:100%; object-fit:cover; position:absolute; z-index:2;"></video>
+          <img id="docPreview" style="display:none; width:100%; height:100%; object-fit:cover; position:absolute; z-index:2; background:#101B2E;">
+          <svg class="heatmap-overlay" id="heatmapOverlay" viewBox="0 0 220 280" style="z-index:3;">
+            <defs>
+              <radialGradient id="hot" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="#FF5B3D" stop-opacity="0.95"/>
+                <stop offset="55%" stop-color="#FFB13D" stop-opacity="0.55"/>
+                <stop offset="100%" stop-color="#FFB13D" stop-opacity="0"/>
+              </radialGradient>
+            </defs>
+            <ellipse cx="135" cy="55" rx="42" ry="26" fill="url(#hot)"/>
+            <rect x="98" y="40" width="76" height="26" rx="3" fill="none" stroke="#FF5B3D" stroke-width="1.5" stroke-dasharray="3 2"/>
+          </svg>
+          <div class="corner tl"></div><div class="corner tr"></div>
+          <div class="corner bl"></div><div class="corner br"></div>
+        </div>
+
+        <!-- Document Actions -->
+        <div class="capture-actions" id="docCaptureActions" style="margin-top:16px; display:flex; gap:8px;">
+           <button class="btn btn-sm" id="btnDocCamera">Use camera</button>
+           <label class="btn btn-sm" style="cursor:pointer; margin:0;">
+             Upload document <input type="file" id="fileDoc" accept="image/*" style="display:none;">
+           </label>
+        </div>
+        <div class="capture-actions" id="docActiveActions" style="margin-top:16px; display:none; gap:8px;">
+           <button class="btn btn-sm" id="btnCaptureDoc" style="background:var(--navy); color:#fff;">Capture document</button>
+           <button class="btn btn-sm" id="btnCancelDoc">Cancel</button>
+        </div>
+
+        <!-- Live Face Section -->
+        <div class="live-face-section" style="margin-top:16px; border-top:1px solid var(--line); padding-top:16px;">
+          <div style="font-size:12px; font-weight:600; color:var(--text-primary); margin-bottom:8px;">Live Face Capture</div>
+          <div style="display:flex; gap:12px; align-items:center;">
+            <div id="faceFrame" style="width:70px; height:70px; border-radius:4px; background:#16233A; border:1px solid var(--line); overflow:hidden; position:relative; display:flex; align-items:center; justify-content:center;">
+               <svg id="faceSvg" viewBox="0 0 60 60" width="60%">
+                 <circle cx="30" cy="24" r="11" fill="#2E5372"/>
+                 <path d="M12 52 q18 -18 36 0" fill="#2E5372"/>
+               </svg>
+               <video id="faceVideo" autoplay playsinline style="display:none; width:100%; height:100%; object-fit:cover;"></video>
+               <img id="facePreview" style="display:none; width:100%; height:100%; object-fit:cover;">
+            </div>
+            <div id="faceCaptureActions" style="display:flex; flex-direction:column; gap:6px; flex:1;">
+               <button class="btn btn-sm" id="btnStartFaceCam">Start face camera</button>
+            </div>
+            <div id="faceActiveActions" style="display:none; flex-direction:column; gap:6px; flex:1;">
+               <button class="btn btn-sm" id="btnCaptureFace" style="background:var(--navy); color:#fff;">Capture face</button>
+               <button class="btn btn-sm" id="btnCancelFace">Cancel</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Run Screening Button -->
+        <div style="margin-top:16px;">
+          <button class="btn btn-primary" id="btnRunScreening" style="width:100%;" disabled>Run Screening</button>
+          <div id="captureError" style="color:var(--reject); font-size:11.5px; font-weight:500; margin-top:8px; display:none;"></div>
+        </div>
+
+        <div class="field-readout" id="fieldReadout" style="opacity:0; transition: opacity 0.3s;">
+          <div class="fr"><div class="k">MRZ NAME</div><div class="v" id="roName">—</div></div>
+          <div class="fr"><div class="k">DOCUMENT NO.</div><div class="v" id="roDoc">—</div></div>
+          <div class="fr"><div class="k">DOB</div><div class="v" id="roDob">—</div></div>
+          <div class="fr"><div class="k">EXPIRY</div><div class="v" id="roExp">—</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CENTER: 6-stage pipeline rail -->
+    <div class="panel">
+      <div class="panel-head"><h2>6-stage pipeline</h2><span class="meta" id="pipelineMeta">Initialising…</span></div>
+      <div class="panel-body">
+        <div class="pipeline-rail" id="rail"></div>
+        <div class="stage-detail" id="stageDetail">Initialising capture stage…</div>
+        <div class="tech-footnote">
+          <span class="tech-chip" data-status="pending-integration" title="OCR engine">PaddleOCR</span>
+          <span class="tech-chip" data-status="pending-integration" title="Tamper detection CNN">ELA + CNN</span>
+          <span class="tech-chip" data-status="pending-integration" title="Face verification">ArcFace</span>
+          <span class="tech-chip" data-status="pending-integration" title="Biometric dedup index">FAISS</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: risk gauge + officer decision -->
+    <div class="panel panel--dominant">
+      <div class="panel-head"><h2>Risk assessment</h2><span class="meta">Composite score</span></div>
+      <div class="panel-body">
+        <div class="gauge-wrap">
+          <canvas id="gauge" width="220" height="130"></canvas>
+          <div class="gauge-num" id="gaugeNum">—<span class="of">/100</span></div>
+          <div class="gauge-verdict">
+            <span class="status status-pending" id="verdictBadge">Awaiting pipeline</span>
+          </div>
+        </div>
+
+        <div class="decision-row">
+          <button class="decision-btn approve" id="btnApprove" disabled>
+            ${PRAMAAN.ICONS.check}Approve<span style="font-weight:500; font-size:11px; opacity:0.75;">स्वीकृत</span>
+          </button>
+          <button class="decision-btn flag" id="btnFlag" disabled>
+            ${PRAMAAN.ICONS.flagIcon}Flag<span style="font-weight:500; font-size:11px; opacity:0.75;">समीक्षा हेतु</span>
+          </button>
+          <button class="decision-btn reject" id="btnReject" disabled>
+            ${PRAMAAN.ICONS.x}Reject<span style="font-weight:500; font-size:11px; opacity:0.75;">अस्वीकृत</span>
+          </button>
+        </div>
+
+        <div class="anchor-result" id="anchorResult">
+          <div class="title">${PRAMAAN.ICONS.check} Event anchored to local ledger</div>
+          <div class="hashline mono" id="anchorHash"></div>
+          <div style="font-size:10.5px; color:#276749; margin-top:6px;">
+            Officer <span class="mono">${PRAMAAN.OFFICER.badge}</span> ·
+            <span id="anchorTime"></span> ·
+            Hyperledger Fabric block #<span id="blockNum" class="mono"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  
+  <!-- Face Capture Modal -->
+  <div id="faceModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(10,15,25,0.95); z-index:9999; flex-direction:column; align-items:center; justify-content:center; backdrop-filter:blur(5px);">
+    <h2 style="color:#fff; margin-bottom:8px; font-weight:600; font-size:24px;">Live Facial Scanning</h2>
+    <p style="color:#A0AEC0; margin-bottom:32px; font-size:15px;">Please align your face within the oval area.</p>
+    
+    <div style="position:relative; width:480px; height:480px; border-radius:12px; overflow:hidden; background:#000; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+      <video id="modalFaceVideo" autoplay playsinline style="width:100%; height:100%; object-fit:cover; transform: scaleX(-1);"></video>
+      
+      <!-- Oval Cutout Overlay using SVG mask -->
+      <svg viewBox="0 0 480 480" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none;">
+        <defs>
+          <mask id="oval-mask">
+            <rect width="100%" height="100%" fill="white" />
+            <ellipse cx="240" cy="240" rx="130" ry="170" fill="black" />
+          </mask>
+        </defs>
+        <rect width="100%" height="100%" fill="rgba(16, 27, 46, 0.75)" mask="url(#oval-mask)" />
+        <ellipse cx="240" cy="240" rx="130" ry="170" fill="none" stroke="#3A7CA5" stroke-width="2" stroke-dasharray="8 6" />
+      </svg>
+    </div>
+    
+    <div style="display:flex; gap:16px; margin-top:40px;">
+       <button class="btn" id="btnModalCancelFace" style="padding: 12px 28px; font-size:15px; border:1px solid #4A5568; background:transparent; color:#fff;">Cancel</button>
+       <button class="btn" id="btnModalCaptureFace" style="background:#38A169; color:#fff; padding: 12px 28px; font-size:15px; border:none; font-weight:600;">Capture Face</button>
+    </div>
+  </div>
+`;
+
+// ---- Render pipeline rail ----
+document.getElementById('rail').innerHTML = PRAMAAN.STAGES.map(s => `
+  <div class="p-stage" data-key="${s.key}">
+    <div class="node">${s.code}</div>
+    <div class="lbl">${s.label}</div>
+  </div>`).join('');
+
+const stageDetails = {
+  capture:  'Document image and live face acquisition complete. Frame quality: sharp, no glare.',
+  extract:  'OCR pulling MRZ and text fields via PaddleOCR / Tesseract fallback.',
+  validate: 'Checking MRZ checksum against blacklist and expiry database. No blacklist match.',
+  detect:   'Running ELA and CNN tampered-region analysis on document surface.',
+  verify:   'Matching live face to document photo, liveness check, biometric dedup via FAISS.',
+  log:      'Generating composite risk score and writing event hash to local ledger.',
+};
+
+// ---- Gauge chart ----
+let gaugeChart;
+function drawGauge(score) {
+  const ctx = document.getElementById('gauge');
+  const threshold = CONFIG.THRESHOLDS.AUTO_FLAG_RISK;
+  const color = score < 30 ? '#38A169' : score < threshold ? '#D69E2E' : '#C53030';
+  if (gaugeChart) gaugeChart.destroy();
+  gaugeChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: { datasets: [{ data: [score, 100 - score], backgroundColor: [color, '#E7ECF2'], borderWidth: 0 }] },
+    options: {
+      circumference: 180, rotation: 270, cutout: '75%',
+      plugins: { legend: { display: false }, tooltip: { enabled: false } }
+    }
+  });
+}
+drawGauge(0);
+
+function drawGaugeAnimated(target) {
+  const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (prefersReduced) {
+    document.getElementById('gaugeNum').innerHTML = target + '<span class="of">/100</span>';
+    drawGauge(target);
+    return;
+  }
+  
+  const el = document.getElementById('gaugeNum');
+  const duration = 1200;
+  const start = performance.now();
+  
+  function easeOutQuart(x) { return 1 - Math.pow(1 - x, 4); }
+  
+  function animate(time) {
+    let progress = (time - start) / duration;
+    if (progress > 1) progress = 1;
+    
+    const cur = Math.round(target * easeOutQuart(progress));
+    el.innerHTML = cur + '<span class="of">/100</span>';
+    drawGauge(cur);
+    
+    if (progress < 1) requestAnimationFrame(animate);
+  }
+  requestAnimationFrame(animate);
+}
+
+
+// ---- Stage rail helpers ----
+window.stageStates = [];
+function setStage(idx, state) {
+  if (state && state !== 'active') {
+    window.stageStates[idx] = state;
+  }
+  document.querySelectorAll('.p-stage').forEach((n, i) => {
+    n.classList.remove('active', 'done', 'flagged', 'error', 'unavailable');
+    if (i === idx && state === 'active') {
+      n.classList.add('active');
+    } else if (i <= idx && window.stageStates[i]) {
+      n.classList.add(window.stageStates[i]);
+    }
+  });
+}
+
+// ---- Pipeline orchestration ----
+const caseRef = 'RAX-20260902-0312';
+let abortController = new AbortController();
+
+async function runPipeline(payload, signal) {
+  try {
+    const mode = payload.mode || 'live';
+    localStorage.setItem('pramaan_active_bg_case', caseRef);
+
+    // Stage 2 — Extract (OCR)
+
+    setStage(1, 'active');
+    document.getElementById('stageDetail').innerHTML =
+      `<strong style="color:var(--navy);">02 Extract</strong> — ${stageDetails.extract} <span class="tag">extract</span>`;
+    let extractRes;
+    try {
+      extractRes = await API.stageExtract(payload);
+    } catch (err) {
+      if (signal.aborted) return;
+      document.getElementById('stageDetail').innerHTML =
+        `<strong style="color:var(--reject);">02 Extract</strong> — OCR extraction failed — low-quality capture. Ambient light insufficient. Retrying (attempt 3 of 3)… <br><br>
+         <button class="btn btn-sm" onclick="initMode('flagged')">↺ Retry with standard capture</button>`;
+      setStage(1, 'error');
+      document.getElementById('pipelineMeta').textContent = 'Failed — OCR error';
+      return;
+    }
+    if (signal.aborted) return;
+
+    // Update OCR readout safely handles UNAVAILABLE
+    document.getElementById('roName').textContent = extractRes?.data?.name || 'Pending integration';
+    document.getElementById('roDoc').textContent  = extractRes?.data?.docNo || '---';
+    document.getElementById('roDob').textContent  = extractRes?.data?.dob || '---';
+    document.getElementById('roExp').textContent  = extractRes?.data?.expiry || '---';
+    document.getElementById('fieldReadout').style.opacity = '1';
+    setStage(1, extractRes?.status === 'UNAVAILABLE' ? 'unavailable' : 'done');
+
+    // Stage 3 — Validate
+    setStage(2, 'active');
+    document.getElementById('stageDetail').innerHTML =
+      `<strong style="color:var(--navy);">03 Validate</strong> — ${stageDetails.validate} <span class="tag">validate</span>`;
+    const validateRes = await API.stageValidate(payload);
+    if (signal.aborted) return;
+    setStage(2, validateRes?.status === 'UNAVAILABLE' ? 'unavailable' : 'done');
+
+    // Stage 4 — Detect (tamper)
+    setStage(3, 'active');
+    document.getElementById('stageDetail').innerHTML =
+      `<strong style="color:var(--navy);">04 Detect</strong> — ${stageDetails.detect} <span class="tag">detect</span>`;
+    const detectRes = await API.stageDetect(payload);
+    if (signal.aborted) return;
+    if (detectRes?.status === 'FLAG' || detectRes?.status === 'REVIEW') document.getElementById('heatmapOverlay').classList.add('on');
+    setStage(3, detectRes?.status === 'UNAVAILABLE' ? 'unavailable' : 'done');
+
+    // Stage 5 — Verify (face match)
+    setStage(4, 'active');
+    document.getElementById('stageDetail').innerHTML =
+      `<strong style="color:var(--navy);">05 Verify</strong> — ${stageDetails.verify} <span class="tag">verify</span>`;
+    const verifyRes = await API.stageVerify(payload);
+    if (signal.aborted) return;
+    setStage(4, verifyRes?.status === 'UNAVAILABLE' ? 'unavailable' : 'done');
+
+    // Stage 6 — Log / risk fusion
+    setStage(5, 'active');
+    document.getElementById('stageDetail').innerHTML =
+      `<strong style="color:var(--navy);">06 Log/Anchor</strong> — ${stageDetails.log} <span class="tag">log</span>`;
+    const logRes = await API.stageLog({
+      caseRef: payload.caseRef,
+      extractionData: extractRes || {},
+      tamperRes: detectRes || {},
+      verifyRes: verifyRes || {}
+    });
+    if (signal.aborted) return;
+
+    // Surface result gracefully
+    if (logRes.compositeScore !== null && logRes.compositeScore !== undefined) {
+      drawGaugeAnimated(logRes.compositeScore);
+    } else {
+      document.getElementById('gaugeNum').innerHTML = '<span style="font-size:11px; font-weight:600; color:var(--text-secondary);">UNAVAILABLE</span>';
+      drawGaugeAnimated(0);
+    }
+    
+    const badge = document.getElementById('verdictBadge');
+
+    if (logRes.suggestedDecision === 'clear') {
+      document.getElementById('pipelineMeta').textContent = 'Complete — awaiting decision';
+      badge.className = 'status status-clear';
+      badge.innerHTML = PRAMAAN.ICONS.check + ' Clear';
+      document.getElementById('btnApprove').classList.add('recommended');
+      setStage(5, 'done');
+    } else if (logRes.suggestedDecision === 'UNAVAILABLE') {
+      document.getElementById('pipelineMeta').textContent = 'Verification incomplete — awaiting ML integration';
+      badge.className = 'status status-pending';
+      badge.innerHTML = 'Awaiting ML integration';
+      setStage(5, 'unavailable');
+    } else {
+      document.getElementById('pipelineMeta').textContent = 'Complete — awaiting decision';
+      badge.className = 'status status-flag';
+      badge.innerHTML = PRAMAAN.ICONS.flagIcon + ' Flag for review';
+      setStage(5, 'flagged');
+    }
+    ['btnApprove', 'btnFlag', 'btnReject'].forEach(id => document.getElementById(id).disabled = false);
+
+  } catch (e) {
+    if (!signal.aborted) console.error('Pipeline error:', e);
+  }
+}
+
+// ---- Officer decision ----
+async function commitDecision(kind) {
+  ['btnApprove', 'btnFlag', 'btnReject'].forEach(id => document.getElementById(id).disabled = true);
+
+  const hash = await PRAMAAN.hashFromRef(caseRef);
+  const anchorRes = await API.anchorDecision({ caseRef, decision: kind });
+
+  document.getElementById('anchorHash').textContent = hash;
+  document.getElementById('anchorTime').textContent = anchorRes.timestamp;
+  document.getElementById('blockNum').textContent   = anchorRes.blockNum;
+
+  const result = document.getElementById('anchorResult');
+  const title  = result.querySelector('.title');
+  const map = {
+    approve: ['#38A169', PRAMAAN.ICONS.check    + ' Case approved — Anchored to local ledger'],
+    flag:    ['#D69E2E', PRAMAAN.ICONS.flagIcon + ' Case flagged — Handed to second officer'],
+    reject:  ['#C53030', PRAMAAN.ICONS.x        + ' Case rejected — Suspect referred to holding'],
+  };
+  result.style.borderColor = map[kind][0];
+  result.style.background  = kind === 'approve' ? '#E6F4EC' : kind === 'flag' ? '#FCF3DD' : '#FBE7E7';
+  title.style.color        = map[kind][0];
+  title.innerHTML          = map[kind][1];
+  result.classList.add('show');
+}
+
+document.getElementById('btnApprove').addEventListener('click', () => commitDecision('approve'));
+document.getElementById('btnFlag').addEventListener('click',    () => commitDecision('flag'));
+document.getElementById('btnReject').addEventListener('click',  () => commitDecision('reject'));
+
+// ============================================================
+// CAPTURE SYSTEM — Document & Live Face
+// ============================================================
+
+// --- State ---
+let capturedDocImage = null;   // base64 data URL
+let capturedFaceImage = null;  // base64 data URL
+let docStream = null;          // active document camera MediaStream
+let faceStream = null;         // active face camera MediaStream
+
+// --- Canvas (off-screen) for snapshot ---
+const snapCanvas = document.createElement('canvas');
+
+function stopStream(stream) {
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+  }
+}
+
+function showCaptureError(msg) {
+  const el = document.getElementById('captureError');
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+function updateRunButton() {
+  const btn = document.getElementById('btnRunScreening');
+  const hasDoc  = !!capturedDocImage;
+  const hasFace = !!capturedFaceImage;
+  btn.disabled = !(hasDoc && hasFace);
+  btn.title = !hasDoc ? 'Document capture required' : !hasFace ? 'Live face capture required' : 'Ready to run';
+  showCaptureError('');
+}
+
+function captureFrameFromVideo(videoEl) {
+  snapCanvas.width  = videoEl.videoWidth  || 640;
+  snapCanvas.height = videoEl.videoHeight || 480;
+  const ctx = snapCanvas.getContext('2d');
+  ctx.drawImage(videoEl, 0, 0, snapCanvas.width, snapCanvas.height);
+  return snapCanvas.toDataURL('image/jpeg', 0.92);
+}
+
+function basicImageQualityCheck(dataUrl) {
+  // Lightweight client-side check: image must be non-trivial size (> 2KB)
+  if (!dataUrl || dataUrl.length < 2000) return false;
+  return true;
+}
+
+// --- DOCUMENT CAMERA ---
+async function startDocCamera() {
+  stopStream(docStream);
+  docStream = null;
+  const video = document.getElementById('docVideo');
+  const docSvg = document.getElementById('docSvg');
+  const docPreview = document.getElementById('docPreview');
+  try {
+    docStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+    video.srcObject = docStream;
+    video.style.display = 'block';
+    docSvg.style.display = 'none';
+    docPreview.style.display = 'none';
+    document.getElementById('docCaptureActions').style.display = 'none';
+    document.getElementById('docActiveActions').style.display  = 'flex';
+    document.getElementById('docTypeLbl').textContent = '● Camera active';
+    document.getElementById('docTypeLbl').style.color = 'var(--clear)';
+    showCaptureError('');
+  } catch (err) {
+    stopStream(docStream);
+    docStream = null;
+    const msg = (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')
+      ? 'Camera access denied. Upload a document image instead.'
+      : 'No camera device found. Upload a document image instead.';
+    showCaptureError(msg);
+    document.getElementById('docCaptureActions').style.display = 'flex';
+    document.getElementById('docActiveActions').style.display  = 'none';
+    document.getElementById('docTypeLbl').textContent = 'Passport (MRZ)';
+    document.getElementById('docTypeLbl').style.color = '';
+  }
+}
+
+function captureDocFromCamera() {
+  const video = document.getElementById('docVideo');
+  const dataUrl = captureFrameFromVideo(video);
+  if (!basicImageQualityCheck(dataUrl)) {
+    showCaptureError('Capture quality insufficient — please retry.');
+    return;
+  }
+  stopStream(docStream);
+  docStream = null;
+  capturedDocImage = dataUrl;
+  showDocPreview(dataUrl);
+  updateRunButton();
+}
+
+function cancelDocCamera() {
+  stopStream(docStream);
+  docStream = null;
+  const video = document.getElementById('docVideo');
+  video.style.display = 'none';
+  video.srcObject = null;
+  document.getElementById('docSvg').style.display  = 'block';
+  document.getElementById('docCaptureActions').style.display = 'flex';
+  document.getElementById('docActiveActions').style.display  = 'none';
+  document.getElementById('docTypeLbl').textContent = 'Passport (MRZ)';
+  document.getElementById('docTypeLbl').style.color = '';
+  showCaptureError('');
+}
+
+function showDocPreview(dataUrl) {
+  const preview = document.getElementById('docPreview');
+  const video   = document.getElementById('docVideo');
+  const docSvg  = document.getElementById('docSvg');
+  preview.src = dataUrl;
+  preview.style.display = 'block';
+  video.style.display   = 'none';
+  docSvg.style.display  = 'none';
+  document.getElementById('docCaptureActions').style.display = 'flex';
+  document.getElementById('docActiveActions').style.display  = 'none';
+  document.getElementById('docTypeLbl').textContent = '✓ Document captured';
+  document.getElementById('docTypeLbl').style.color = 'var(--clear)';
+}
+
+function resetDocCapture() {
+  stopStream(docStream);
+  docStream = null;
+  capturedDocImage = null;
+  const video   = document.getElementById('docVideo');
+  const preview = document.getElementById('docPreview');
+  const docSvg  = document.getElementById('docSvg');
+  video.style.display    = 'none';
+  video.srcObject        = null;
+  preview.style.display  = 'none';
+  docSvg.style.display   = 'block';
+  document.getElementById('docCaptureActions').style.display = 'flex';
+  document.getElementById('docActiveActions').style.display  = 'none';
+  document.getElementById('docTypeLbl').textContent = 'Passport (MRZ)';
+  document.getElementById('docTypeLbl').style.color = '';
+  document.getElementById('fileDoc').value = '';
+  updateRunButton();
+}
+
+// File upload handler
+document.getElementById('fileDoc').addEventListener('change', function() {
+  const file = this.files[0];
+  if (!file) return;
+  if (!file.type.startsWith('image/')) {
+    showCaptureError('Invalid file type. Please select an image.');
+    this.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    const dataUrl = e.target.result;
+    if (!basicImageQualityCheck(dataUrl)) {
+      showCaptureError('Image file appears empty or unreadable. Try another file.');
+      return;
+    }
+    capturedDocImage = dataUrl;
+    showDocPreview(dataUrl);
+    updateRunButton();
+  };
+  reader.onerror = () => showCaptureError('Could not read file. Try another image.');
+  reader.readAsDataURL(file);
+});
+
+document.getElementById('btnDocCamera').addEventListener('click',   startDocCamera);
+document.getElementById('btnCaptureDoc').addEventListener('click',  captureDocFromCamera);
+document.getElementById('btnCancelDoc').addEventListener('click',   cancelDocCamera);
+
+// --- FACE CAMERA ---
+async function startFaceCamera() {
+  stopStream(faceStream);
+  faceStream = null;
+  const video = document.getElementById('modalFaceVideo');
+  
+  try {
+    faceStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false
+    });
+    video.srcObject = faceStream;
+    document.getElementById('faceModal').style.display = 'flex';
+    showCaptureError('');
+  } catch (err) {
+    stopStream(faceStream);
+    faceStream = null;
+    const msg = (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')
+      ? 'Camera access denied for face capture.'
+      : 'No camera found for face capture.';
+    showCaptureError(msg);
+  }
+}
+
+function captureFaceFromCamera() {
+  const video = document.getElementById('modalFaceVideo');
+  const dataUrl = captureFrameFromVideo(video);
+  if (!basicImageQualityCheck(dataUrl)) {
+    alert('Face capture quality insufficient — please retry.');
+    return;
+  }
+  
+  // Mirror the image horizontally because we display it mirrored
+  const img = new Image();
+  img.onload = function() {
+    snapCanvas.width = img.width;
+    snapCanvas.height = img.height;
+    const ctx = snapCanvas.getContext('2d');
+    ctx.translate(snapCanvas.width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(img, 0, 0);
+    const flippedDataUrl = snapCanvas.toDataURL('image/jpeg', 0.92);
+    
+    stopStream(faceStream);
+    faceStream = null;
+    document.getElementById('faceModal').style.display = 'none';
+    capturedFaceImage = flippedDataUrl;
+    showFacePreview(flippedDataUrl);
+    updateRunButton();
+  };
+  img.src = dataUrl;
+}
+
+function cancelFaceCamera() {
+  stopStream(faceStream);
+  faceStream = null;
+  const video = document.getElementById('modalFaceVideo');
+  video.srcObject = null;
+  document.getElementById('faceModal').style.display = 'none';
+  showCaptureError('');
+}
+
+function showFacePreview(dataUrl) {
+  const preview = document.getElementById('facePreview');
+  const video   = document.getElementById('faceVideo');
+  const faceSvg = document.getElementById('faceSvg');
+  preview.src = dataUrl;
+  preview.style.display = 'block';
+  video.style.display   = 'none';
+  faceSvg.style.display = 'none';
+  document.getElementById('faceCaptureActions').style.display = 'flex';
+  document.getElementById('faceActiveActions').style.display  = 'none';
+  // Swap Start button to Retry
+  document.getElementById('btnStartFaceCam').textContent = '↺ Retry face';
+}
+
+function resetFaceCapture() {
+  stopStream(faceStream);
+  faceStream = null;
+  capturedFaceImage = null;
+  const video   = document.getElementById('faceVideo');
+  const preview = document.getElementById('facePreview');
+  const faceSvg = document.getElementById('faceSvg');
+  video.style.display    = 'none';
+  video.srcObject        = null;
+  preview.style.display  = 'none';
+  faceSvg.style.display  = 'block';
+  document.getElementById('faceCaptureActions').style.display = 'flex';
+  document.getElementById('faceActiveActions').style.display  = 'none';
+    document.getElementById('btnStartFaceCam').textContent = 'Start face camera';
+  updateRunButton();
+}
+
+document.getElementById('btnStartFaceCam').addEventListener('click',  startFaceCamera);
+document.getElementById('btnModalCaptureFace').addEventListener('click', captureFaceFromCamera);
+document.getElementById('btnModalCancelFace').addEventListener('click',  cancelFaceCamera);
+
+// --- NEW CAPTURE / RESTART ---
+function fullReset() {
+  resetDocCapture();
+  resetFaceCapture();
+  // Reset pipeline & results UI
+  window.stageStates = [];
+  abortController.abort();
+  abortController = new AbortController();
+  drawGauge(0);
+  document.getElementById('gaugeNum').innerHTML = '—<span class="of">/100</span>';
+  document.getElementById('verdictBadge').className = 'status status-pending';
+  document.getElementById('verdictBadge').innerHTML = 'Awaiting pipeline';
+  ['btnApprove', 'btnFlag', 'btnReject'].forEach(id => document.getElementById(id).disabled = true);
+  document.getElementById('pipelineMeta').textContent = 'Awaiting capture…';
+  document.getElementById('anchorResult').classList.remove('show');
+  document.getElementById('heatmapOverlay').classList.remove('on');
+  document.getElementById('fieldReadout').style.opacity = '0';
+  document.getElementById('btnApprove').classList.remove('recommended');
+  document.getElementById('stageDetail').innerHTML = 'Capture a document and live face to begin screening.';
+  // Reset stage rail to blank
+  document.querySelectorAll('.p-stage').forEach(n => n.classList.remove('active','done','flagged','error','unavailable'));
+  showCaptureError('');
+}
+
+document.getElementById('restartBtn').addEventListener('click', fullReset);
+
+// --- 1-CLICK AI TEST SCENARIOS (Real Synthetic PNG Generation) ---
+async function loadSyntheticScenario(scenario, label, color) {
+  try {
+    document.getElementById('stageDetail').innerHTML = 'Generating synthetic AI document (' + scenario + ')…';
+    const res = await API.generateSyntheticData(scenario);
+    capturedDocImage = res.document_base64;
+    capturedFaceImage = res.avatar_base64;
+    showDocPreview(capturedDocImage);
+    showFacePreview(capturedFaceImage);
+    document.getElementById('docTypeLbl').textContent = label;
+    document.getElementById('docTypeLbl').style.color = color;
+    updateRunButton();
+    runScreening(scenario.toLowerCase());
+  } catch (err) {
+    showCaptureError('Failed to generate synthetic scenario: ' + err.message);
+  }
+}
+
+document.getElementById('sampleCleanBtn').addEventListener('click', () => {
+  loadSyntheticScenario('CLEAN', '✅ Genuine Passport', 'var(--steel)');
+});
+
+document.getElementById('sampleTamperBtn').addEventListener('click', () => {
+  loadSyntheticScenario('PHOTO_REPLACEMENT', '⚠️ Photo Swap Tamper', 'var(--flag)');
+});
+
+document.getElementById('sampleDateBtn').addEventListener('click', () => {
+  loadSyntheticScenario('TEXT_DATE', '📝 Altered Expiry Tamper', 'var(--flag)');
+});
+
+document.getElementById('sampleStampBtn').addEventListener('click', () => {
+  loadSyntheticScenario('FAKE_STAMP', '🔏 Fake Stamp Forgery', 'var(--flag)');
+});
+
+
+// --- Run Screening (real capture gate) ---
+document.getElementById('btnRunScreening').addEventListener('click', () => {
+  if (!capturedDocImage) { showCaptureError('Document capture required before screening.'); return; }
+  if (!capturedFaceImage) { showCaptureError('Live face capture required before screening.'); return; }
+  runScreening('live');
+});
+
+async function runScreening(mode) {
+  // Stop any lingering camera streams before pipeline starts
+  stopStream(docStream);  docStream = null;
+  stopStream(faceStream); faceStream = null;
+
+  window.stageStates = [];
+  abortController.abort();
+  abortController = new AbortController();
+
+  // Stage 01 Capture: mark done now that we have real images
+  setStage(0, 'done');
+  document.getElementById('pipelineMeta').textContent = 'Running…';
+  document.getElementById('gaugeNum').innerHTML = '—<span class="of">/100</span>';
+  document.getElementById('verdictBadge').className = 'status status-pending';
+  document.getElementById('verdictBadge').innerHTML = 'Awaiting pipeline';
+  ['btnApprove', 'btnFlag', 'btnReject'].forEach(id => document.getElementById(id).disabled = true);
+  document.getElementById('anchorResult').classList.remove('show');
+  document.getElementById('heatmapOverlay').classList.remove('on');
+  document.getElementById('fieldReadout').style.opacity = '0';
+  document.getElementById('btnApprove').classList.remove('recommended');
+  drawGauge(0);
+
+  const enrichedPayload = {
+    mode,
+    caseRef,
+    documentImage: capturedDocImage,
+    faceImage: capturedFaceImage
+  };
+  await runPipeline(enrichedPayload, abortController.signal);
+}
+
+// --- Cleanup on page hide ---
+window.addEventListener('pagehide', () => {
+  stopStream(docStream);
+  stopStream(faceStream);
+});
+window.addEventListener('beforeunload', () => {
+  stopStream(docStream);
+  stopStream(faceStream);
+});
+
+// --- Initial state: ready for capture ---
+(function initCaptureUI() {
+  document.querySelectorAll('.p-stage').forEach(n => n.classList.remove('active','done','flagged','error','unavailable'));
+  document.getElementById('pipelineMeta').textContent = 'Awaiting capture…';
+  document.getElementById('stageDetail').innerHTML   = 'Capture a document and live face image to begin screening.';
+  document.getElementById('gaugeNum').innerHTML = '—<span class="of">/100</span>';
+  ['btnApprove', 'btnFlag', 'btnReject'].forEach(id => document.getElementById(id).disabled = true);
+  updateRunButton();
+})();
+</script>
+</body>
+</html>
